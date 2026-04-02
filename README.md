@@ -1,6 +1,6 @@
 # Confidence-Aware DSTA-SLR
 
-This repository packages a confidence-aware extension of DSTA-SLR for skeleton-based sign language recognition together with the supporting utilities used for experiment management, robustness analysis, and paper revision.
+This repository packages a confidence-aware extension of DSTA-SLR for skeleton-based sign language recognition, with code for training, evaluation, robustness analysis, and reproducible experiment workflows.
 
 The main codebase extends the original DSTA-SLR pipeline with confidence-aware modeling, reliability-aware consistency training, reproducible experiment runners, and robustness evaluation workflows across multiple sign language datasets.
 
@@ -10,13 +10,10 @@ The main codebase extends the original DSTA-SLR pipeline with confidence-aware m
 - Reliability-aware consistency losses for training and ablation studies
 - Robustness evaluation under missing-joint and noisy-pose perturbations
 - Reproducible experiment scripts for WLASL, MSASL, SLR500, and NMFs-CSL workflows
-- Paper-revision utilities and submission support documents kept alongside the main research code
 
 ## Repository Layout
 
 - `DSTA-SLR/`: main training code, configs, models, fusion tools, and experiment runners
-- `docs/wacv_revision/`: revision notes, supplementary submission material, and checklists
-- `tools/paper_revision/`: DOCX cleanup and reviewer-alignment utilities
 - `output/`: generated outputs and exports, ignored by Git
 - `tmp/`: scratch files and local backups, ignored by Git
 
@@ -44,11 +41,10 @@ For full setup details and experiment notes, start with:
 
 - [DSTA-SLR/readme.md](DSTA-SLR/readme.md)
 - [DSTA-SLR/scripts/EXPERIMENT_RUNBOOK.md](DSTA-SLR/scripts/EXPERIMENT_RUNBOOK.md)
-- [tools/paper_revision/README.md](tools/paper_revision/README.md)
 
 ## Data and Artifact Policy
 
-Datasets, training outputs, logs, exported predictions, and large checkpoints are intentionally excluded from version control.
+Datasets, training outputs, logs, exported predictions, large checkpoints, and private paper-revision materials are intentionally excluded from version control.
 
 - Place datasets under `DSTA-SLR/data/<DATASET_NAME>/`
 - Keep training outputs under `DSTA-SLR/work_dir/` or other ignored local directories

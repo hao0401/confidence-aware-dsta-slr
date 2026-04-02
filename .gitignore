@@ -15,6 +15,7 @@ output/
 artifacts/
 exports/
 reports/
+.playwright-cli/
 
 .venv/
 venv/
@@ -61,3 +62,9 @@ DSTA-SLR/pretrained_models/*.ckpt
 DSTA-SLR/pretrained_models/*.bin
 DSTA-SLR/pretrained_models/*.onnx
 DSTA-SLR/pretrained_models/*.safetensors
+
+# Private paper-revision workspace
+docs/wacv_revision/
+tools/paper_revision/
+*wacv_docx*.ps1
+paper_dump*.txt
