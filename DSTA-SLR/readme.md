@@ -2,38 +2,69 @@
 
 This directory contains the main research code for the confidence-aware DSTA-SLR release. It extends the original DSTA-SLR pipeline with confidence-aware modeling, reliability-aware consistency training, robustness evaluation, and reproducible experiment workflows for skeleton-based sign language recognition.
 
-The codebase is designed for two practical goals:
+The goal of this release is not only to reproduce the baseline DSTA-SLR setup, but also to support controlled studies on how pose-confidence signals affect training stability, fusion behavior, and robustness under corrupted skeleton inputs.
 
-- reproduce the baseline DSTA-SLR training and evaluation pipeline
-- run controlled studies on how pose-confidence signals affect recognition accuracy and robustness
+## Research Focus
 
-## What This Release Adds
+This codebase is organized around three practical research goals:
 
-- Confidence-aware data handling in `feeders/feeder.py`
-  - sanitizes pose-confidence values
-  - supports `original`, `constant`, and `shuffle` confidence modes
-  - simulates missing joints and coordinate noise for robustness studies
-- Confidence-aware model updates in `model/fstgan.py`
-  - confidence encoding
-  - confidence-guided graph aggregation
-  - temporal rectification from confidence maps
-- Reliability-aware consistency training in `main.py`
-  - prediction-level consistency loss
-  - feature-level consistency loss
-  - optional confidence-derived weighting for consistency supervision
-- Reproducible experiment tooling in `scripts/`
-  - dataset-stream config generation
-  - four-stream training and fusion
-  - WLASL100 ablation suites
-  - robustness evaluation and reporting helpers
-- Fusion utilities in `ensemble/`
-  - confidence-aware fusion
-  - uniform-fusion control baselines
+1. Reproduce a strong skeleton-based sign language recognition baseline.
+2. Inject confidence information into the data pipeline, model, and training objective in a controlled way.
+3. Evaluate whether those changes improve robustness under missing-joint and noisy-pose conditions.
+
+## Main Additions in This Release
+
+### 1. Confidence-aware data handling
+
+Implemented primarily in `feeders/feeder.py`.
+
+- sanitizes pose-confidence values before use
+- supports `original`, `constant`, and `shuffle` confidence modes
+- simulates missing joints and coordinate noise for robustness studies
+- keeps confidence perturbations tied to reproducible experiment configs
+
+### 2. Confidence-aware model updates
+
+Implemented primarily in `model/fstgan.py`.
+
+- confidence encoding
+- confidence-guided graph aggregation
+- temporal rectification from confidence maps
+- architecture changes designed to keep confidence signals usable without rewriting the full baseline stack
+
+### 3. Reliability-aware consistency training
+
+Integrated in `main.py`.
+
+- prediction-level consistency loss
+- feature-level consistency loss
+- optional confidence-derived weighting for consistency supervision
+- training path designed for comparative ablation instead of only a single final model
+
+### 4. Reproducible experiment tooling
+
+Implemented across `scripts/`.
+
+- dataset-stream config generation
+- four-stream training and fusion
+- WLASL100 ablation suites
+- repeat runs for mean and standard deviation reporting
+- robustness evaluation and reporting helpers
+
+### 5. Fusion and reporting support
+
+Implemented across `ensemble/` and reporting scripts.
+
+- confidence-aware fusion utilities
+- uniform-fusion control baselines
+- export helpers for summary tables and result aggregation
 
 ## Repository Structure
 
 - `config/`: baseline and confidence-aware YAML experiment configurations
-- `feeders/`, `graph/`, `model/`: data pipeline, graph definition, and network implementation
+- `feeders/`: dataset loading, confidence handling, and perturbation logic
+- `graph/`: graph definitions and related graph utilities
+- `model/`: model implementation, including confidence-aware extensions
 - `ensemble/`: stream fusion utilities and search helpers
 - `scripts/`: experiment runners, data-preparation tools, and reporting scripts
 - `pretrained_models/`: optional checkpoints and notes for external model distribution
@@ -91,7 +122,7 @@ PowerShell helpers are also available:
 pip install -r requirements.txt
 ```
 
-## Common Workflows
+## Quick Start
 
 ### Baseline training
 
@@ -142,11 +173,27 @@ python ensemble/fuse_streams.py \
   --out-dir work_dir/conf_wlasl100_fusion_results
 ```
 
-## Scripts and Runbook
+## Suggested Reproduction Path
+
+If you want a practical path through the codebase, start with:
+
+1. Baseline training and evaluation using `config/train.yaml` and `config/test.yaml`.
+2. Confidence-aware single-stream runs using `config/confidence/`.
+3. Four-stream confidence-aware training through `scripts/run_confidence_suite.py`.
+4. Reliability-aware consistency training with `scripts/run_wlasl100_consistency_suite.py`.
+5. Robustness analysis with `scripts/run_robustness_suite.py`.
+
+For the intended experiment ordering and outputs, see [`scripts/EXPERIMENT_RUNBOOK.md`](scripts/EXPERIMENT_RUNBOOK.md).
+
+## Scripts and Experiment Utilities
 
 For a high-level map of active scripts, see [`scripts/README.md`](scripts/README.md).
 
-For the recommended execution order of the main experiments, see [`scripts/EXPERIMENT_RUNBOOK.md`](scripts/EXPERIMENT_RUNBOOK.md).
+The scripts are organized to support:
+
+- stable top-level entry points for the main workflows
+- grouped implementations under experiment, data, reporting, and common helper modules
+- repeatable runs for ablation and robustness studies
 
 ## Outputs and Artifact Policy
 
@@ -157,6 +204,12 @@ Datasets, local environments, logs, training outputs, and large checkpoints are 
 - distribute large checkpoints through GitHub Releases or external storage instead of normal Git history
 
 Optional pretrained checkpoints can be placed under `pretrained_models/`, but large model files are better shared through release assets or external storage.
+
+## Reproducibility Notes
+
+- Use the provided YAML configs instead of ad hoc command-line overrides whenever possible.
+- Keep dataset paths and output paths stable across runs to simplify fusion and reporting.
+- Prefer script entry points in `scripts/` when reproducing reported workflows, because they encode the intended run structure more clearly than one-off manual commands.
 
 ## Acknowledgements
 
