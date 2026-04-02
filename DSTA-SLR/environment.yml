@@ -1,0 +1,6 @@
+name: dsta-slr
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - pip

@@ -1,0 +1,71 @@
+Experiment_name: conf_msasl200_joint_motion
+dataset: MSASL200
+feeder: feeders.feeder.Feeder
+train_feeder_args:
+  debug: false
+  window_size: 120
+  normalization: true
+  lap_pe: false
+  is_vector: false
+  bone_stream: false
+  motion_stream: true
+  missing_joint_prob: 0.0
+  noise_std: 0.0
+  random_choose: true
+  random_shift: true
+  random_mirror: true
+  random_mirror_p: 0.5
+test_feeder_args:
+  debug: false
+  window_size: 120
+  normalization: true
+  lap_pe: false
+  is_vector: false
+  bone_stream: false
+  motion_stream: true
+  missing_joint_prob: 0.0
+  noise_std: 0.0
+  random_choose: false
+  random_mirror: false
+model: model.fstgan.Model
+model_args:
+  num_class: 200
+  num_point: 27
+  num_person: 1
+  graph: graph.sign_27.Graph
+  groups: 16
+  block_size: 41
+  graph_args:
+    labeling_mode: spatial
+  inner_dim: 64
+  depth: 4
+  drop_layers: 2
+  use_confidence_encoding: true
+  use_confidence_graph: true
+  confidence_graph_lambda: 1.0
+  use_temporal_rectification: true
+  temporal_window_size: 5
+weight_decay: 0.0001
+base_lr: 0.1
+step:
+- 150
+- 200
+device:
+- 0
+keep_rate: 0.9
+only_train_epoch: 1
+batch_size: 24
+test_batch_size: 24
+num_epoch: 250
+nesterov: true
+warm_up_epoch: 20
+wandb: false
+wandb_project: DSTA-SLR Confidence Robustness
+wandb_entity: irvl
+wandb_name: conf_msasl200_joint_motion
+num_worker: 4
+save_interval: 5
+overwrite_work_dir: false
+consistency_loss_weight: 0.1
+consistency_noise_std: 0.01
+consistency_missing_prob: 0.1

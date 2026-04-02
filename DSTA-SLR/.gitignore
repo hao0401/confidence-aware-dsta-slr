@@ -1,0 +1,36 @@
+# Training outputs and experiment artifacts
+save_models/
+work_dir/
+wandb/
+
+# Datasets
+data/
+
+# Optional local checkpoints
+pretrained_models/*.pt
+pretrained_models/*.pth
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor settings
+.vscode/
+.idea/
+
+# Local artifacts
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store

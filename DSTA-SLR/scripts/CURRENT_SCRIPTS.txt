@@ -1,0 +1,46 @@
+Current script layout
+
+1. Stable top-level entry points
+   - Existing `scripts/*.py` command names are preserved as thin wrappers.
+
+2. Experiment implementations
+   - `scripts/experiments/`
+   - run_confidence_suite.py
+   - run_confidence_signal_ablation.py
+   - run_robustness_suite.py
+   - run_wlasl100_consistency_suite.py
+   - run_wlasl100_43.py
+   - run_wlasl100_repeats.py
+   - run_wlasl100_joint_repeats_minimal.py
+   - run_ablation_suite.py
+   - run_baseline_vs_ours_robustness.py
+   - run_uniform_fusion_controls.py
+
+3. Data and config utilities
+   - `scripts/data_tools/`
+   - generate_confidence_configs.py
+   - validate_preprocessed_data.py
+   - download_preprocessed_data.py
+   - repair_corrupt_joint_npy.py
+   - derive_wlasl_subsets.py
+   - list_valid_datasets.py
+
+4. Reporting helpers
+   - `scripts/reporting/`
+   - export_paper_tables.py
+   - summarize_mean_std.py
+
+5. Shared internals
+   - `scripts/common/`
+   - experiment_specs.py
+   - python_locator.py
+   - script_utils.py
+
+6. Environment and documentation
+   - activate_conda_dsta_slr.ps1
+   - setup_conda_env.ps1
+   - EXPERIMENT_RUNBOOK.md
+   - README.md
+
+Archived location
+- One-off queue runners and short-cycle pilot scripts live in `scripts/archive_experimental/`.
