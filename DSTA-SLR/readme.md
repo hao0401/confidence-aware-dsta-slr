@@ -1,54 +1,47 @@
 # DSTA-SLR: Confidence-Aware Skeleton-Based Sign Language Recognition
 
-This repository is based on the paper [Dynamic Spatial-Temporal Aggregation for Skeleton-Aware Sign Language Recognition](https://arxiv.org/pdf/2403.12519.pdf) and extends the original DSTA-SLR codebase with confidence-aware modeling, reliability-aware consistency training, robustness evaluation, and reproducible experiment scripts.
+This directory contains the main research code for the confidence-aware DSTA-SLR release. It extends the original DSTA-SLR pipeline with confidence-aware modeling, reliability-aware consistency training, robustness evaluation, and reproducible experiment workflows for skeleton-based sign language recognition.
 
-The goal of this version is not only to reproduce the baseline model, but also to support controlled ablations and robustness studies on skeleton confidence signals for sign language recognition.
+The codebase is designed for two practical goals:
 
-## Key additions in this version
+- reproduce the baseline DSTA-SLR training and evaluation pipeline
+- run controlled studies on how pose-confidence signals affect recognition accuracy and robustness
+
+## What This Release Adds
 
 - Confidence-aware data handling in `feeders/feeder.py`
-  - sanitizes pose confidence values
+  - sanitizes pose-confidence values
   - supports `original`, `constant`, and `shuffle` confidence modes
   - simulates missing joints and coordinate noise for robustness studies
-- Confidence-aware model extensions in `model/fstgan.py`
+- Confidence-aware model updates in `model/fstgan.py`
   - confidence encoding
   - confidence-guided graph aggregation
-  - temporal rectification based on confidence maps
+  - temporal rectification from confidence maps
 - Reliability-aware consistency training in `main.py`
   - prediction-level consistency loss
   - feature-level consistency loss
   - optional confidence-derived weighting for consistency supervision
-- Reproducible experiment utilities in `scripts/`
-  - confidence configuration generation
+- Reproducible experiment tooling in `scripts/`
+  - dataset-stream config generation
   - four-stream training and fusion
   - WLASL100 ablation suites
   - robustness evaluation and reporting helpers
-- Confidence-aware and uniform fusion tools in `ensemble/`
+- Fusion utilities in `ensemble/`
+  - confidence-aware fusion
+  - uniform-fusion control baselines
 
-## Repository layout
+## Repository Structure
 
-- `config/`: baseline and confidence-aware YAML experiment configs
-- `feeders/`, `graph/`, `model/`: data pipeline and network implementation
-- `ensemble/`: score fusion utilities
-- `scripts/`: experiment runners, data preparation helpers, and reporting tools
-- `pretrained_models/`: optional pretrained checkpoints
+- `config/`: baseline and confidence-aware YAML experiment configurations
+- `feeders/`, `graph/`, `model/`: data pipeline, graph definition, and network implementation
+- `ensemble/`: stream fusion utilities and search helpers
+- `scripts/`: experiment runners, data-preparation tools, and reporting scripts
+- `pretrained_models/`: optional checkpoints and notes for external model distribution
+- `main.py`: training and evaluation entry point
 
-## Data preparation
+## Supported Datasets
 
-Datasets and training outputs are intentionally not included in this repository.
-
-The preprocessed skeleton data for NMFs-CSL, SLR500, MSASL, and WLASL are referenced in the original project release [here](https://mega.nz/folder/EvkEzIAC#gq_nWLbbWoj9WVnJGxnGaA). Please follow the dataset licenses and usage agreements before downloading or using any data.
-
-Place each dataset under `data/<DATASET_NAME>/`. For example, for WLASL2000:
-
-```bash
-mkdir -p data
-ln -s /path/to/WLASL2000 ./data/WLASL2000
-```
-
-If you are working on Windows, you can also place the folder directly under `data/` or create a junction instead.
-
-Supported dataset keys in the configs include:
+The configs and experiment scripts currently support:
 
 - `WLASL100`
 - `WLASL300`
@@ -60,6 +53,17 @@ Supported dataset keys in the configs include:
 - `MSASL1000`
 - `SLR500`
 - `NMFs-CSL`
+
+Preprocessed skeleton data are not bundled with this repository. The original project release references the prepared data package [here](https://mega.nz/folder/EvkEzIAC#gq_nWLbbWoj9WVnJGxnGaA). Please follow the relevant dataset licenses and usage terms before downloading or using any data.
+
+Place each dataset under `data/<DATASET_NAME>/`. For example, for `WLASL2000`:
+
+```bash
+mkdir -p data
+ln -s /path/to/WLASL2000 ./data/WLASL2000
+```
+
+On Windows, you can also copy the dataset folder directly under `data/` or create a junction instead of a symlink.
 
 ## Installation
 
@@ -74,20 +78,20 @@ python -m pip install --extra-index-url https://download.pytorch.org/whl/cu128 t
 python -m pip install -r requirements-conda.txt
 ```
 
-PowerShell helpers are also included:
+PowerShell helpers are also available:
 
 ```powershell
 .\scripts\setup_conda_env.ps1
 .\scripts\activate_conda_dsta_slr.ps1
 ```
 
-### Legacy pip / venv setup
+### Legacy pip or venv setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Quick start
+## Common Workflows
 
 ### Baseline training
 
@@ -107,7 +111,7 @@ python -u main.py --config config/test.yaml --device 0
 python -u main.py --config config/confidence/wlasl100_joint.yaml --device 0
 ```
 
-### Confidence-aware four-stream training and fusion
+### Four-stream confidence-aware training and fusion
 
 ```bash
 python scripts/run_confidence_suite.py --dataset WLASL100 --device 0 --num-worker 0
@@ -138,16 +142,21 @@ python ensemble/fuse_streams.py \
   --out-dir work_dir/conf_wlasl100_fusion_results
 ```
 
-Additional workflow notes are documented in `scripts/README.md` and `scripts/EXPERIMENT_RUNBOOK.md`.
+## Scripts and Runbook
 
-## Pretrained models
+For a high-level map of active scripts, see [`scripts/README.md`](scripts/README.md).
 
-Optional pretrained checkpoints can be placed under `pretrained_models/`. For a public GitHub repository, it is usually better to distribute large model files through GitHub Releases or external storage instead of regular Git history.
+For the recommended execution order of the main experiments, see [`scripts/EXPERIMENT_RUNBOOK.md`](scripts/EXPERIMENT_RUNBOOK.md).
 
-## Notes for public release
+## Outputs and Artifact Policy
 
-- Keep `data/`, `work_dir/`, local environments, and logs out of version control.
-- Large checkpoints are better distributed through GitHub Releases or external storage than through regular Git history.
+Datasets, local environments, logs, training outputs, and large checkpoints are intentionally excluded from version control.
+
+- keep datasets under `data/`
+- keep experiment outputs under `work_dir/`
+- distribute large checkpoints through GitHub Releases or external storage instead of normal Git history
+
+Optional pretrained checkpoints can be placed under `pretrained_models/`, but large model files are better shared through release assets or external storage.
 
 ## Acknowledgements
 
