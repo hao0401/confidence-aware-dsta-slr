@@ -2,7 +2,7 @@
 
 Confidence-Aware DSTA-SLR is a research-oriented extension of DSTA-SLR for skeleton-based sign language recognition. This release focuses on making pose-confidence signals usable throughout the training and evaluation pipeline, with support for confidence-aware modeling, reliability-aware consistency learning, robustness analysis, and reproducible experiment workflows.
 
-The public repository root is intentionally lightweight. It serves as the entry point to the main codebase, experiment scripts, and release-facing documentation, while large artifacts and private drafting materials stay out of version control.
+The public repository root is intentionally lightweight. It serves as the entry point to the main codebase, experiment scripts, and release-facing documentation, while large artifacts stay out of version control.
 
 ## Overview
 
@@ -57,7 +57,6 @@ The following are intentionally excluded from version control:
 - checkpoints and large pretrained weights
 - training outputs and logs
 - temporary artifacts
-- private paper-revision materials
 
 ## Notes for Public Use
 
