@@ -1,9 +1,13 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\haoha\Documents\New project\DSTA-SLR"
-$python = "C:\Users\haoha\miniconda3\envs\dsta-slr\python.exe"
+. (Join-Path $PSScriptRoot "..\common\runtime_helpers.ps1")
+
+$root = Get-DstaSlrRoot -StartPath $PSScriptRoot
+$python = Resolve-DstaSlrPython -Root $root
 $logDir = Join-Path $root "work_dir\queue_logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+
+Set-Location $root
 
 function Wait-ForTrainingToFinish {
     param(

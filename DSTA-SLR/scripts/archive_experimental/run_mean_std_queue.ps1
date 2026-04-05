@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\haoha\Documents\New project\DSTA-SLR"
-$python = "C:\Users\haoha\miniconda3\envs\dsta-slr\python.exe"
+. (Join-Path $PSScriptRoot "..\common\runtime_helpers.ps1")
+
+$root = Get-DstaSlrRoot -StartPath $PSScriptRoot
+$python = Resolve-DstaSlrPython -Root $root
 $variants = @(
     "baseline",
     "node_encoding_only",
@@ -9,6 +11,8 @@ $variants = @(
     "temporal_only",
     "all_modules"
 )
+
+Set-Location $root
 
 function Get-TrainingProcess {
     Get-CimInstance Win32_Process |

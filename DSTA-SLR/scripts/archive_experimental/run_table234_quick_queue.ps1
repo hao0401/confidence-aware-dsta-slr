@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\haoha\Documents\New project\DSTA-SLR"
-$python = "C:\Users\haoha\miniconda3\envs\dsta-slr\python.exe"
+. (Join-Path $PSScriptRoot "..\common\runtime_helpers.ps1")
+
+$root = Get-DstaSlrRoot -StartPath $PSScriptRoot
+$python = Resolve-DstaSlrPython -Root $root
 
 function Invoke-QuickPilot {
     param(

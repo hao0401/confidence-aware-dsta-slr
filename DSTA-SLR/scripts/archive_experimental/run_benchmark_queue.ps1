@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 
-$root = "C:\Users\haoha\Documents\New project\DSTA-SLR"
-$python = "C:\Users\haoha\miniconda3\envs\dsta-slr\python.exe"
+. (Join-Path $PSScriptRoot "..\common\runtime_helpers.ps1")
+
+$root = Get-DstaSlrRoot -StartPath $PSScriptRoot
+$python = Resolve-DstaSlrPython -Root $root
 $candidateDatasets = @(
     "WLASL2000",
     "MSASL100",
@@ -11,6 +13,8 @@ $candidateDatasets = @(
     "SLR500",
     "NMFs-CSL"
 )
+
+Set-Location $root
 $datasets = & $python scripts\list_valid_datasets.py --datasets $candidateDatasets
 
 function Get-TrainingProcess {

@@ -652,9 +652,6 @@ def test(data_path, label_path, vid=None, graph=None, is_3d=False):
 
 
 if __name__ == "__main__":
-    import os
-
-    os.environ["DISPLAY"] = "localhost:10.0"
     data_path = "../data/ntu/xview/val_data_joint.npy"
     label_path = "../data/ntu/xview/val_label.pkl"
     graph = "graph.ntu_rgb_d.Graph"

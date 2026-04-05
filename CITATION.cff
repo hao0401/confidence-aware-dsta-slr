@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite it using the metadata from this file."
+title: "Confidence-Aware DSTA-SLR"
+type: software
+authors:
+  - family-names: "hao0401"
+    email: "haohaoha040122@gmail.com"
+abstract: "Confidence-aware extension of DSTA-SLR for skeleton-based sign language recognition, including reliability-aware consistency training, robustness evaluation, and reproducible experiment workflows."
+repository-code: "https://github.com/hao0401/confidence-aware-dsta-slr"
+url: "https://github.com/hao0401/confidence-aware-dsta-slr"
+license: "CC-BY-NC-4.0"
+keywords:
+  - "sign language recognition"
+  - "skeleton-based recognition"
+  - "confidence-aware learning"
+  - "robustness evaluation"
