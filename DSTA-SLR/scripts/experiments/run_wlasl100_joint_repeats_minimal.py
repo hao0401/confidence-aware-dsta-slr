@@ -1,15 +1,20 @@
 import argparse
 import pickle
-import statistics
 from pathlib import Path
 
 from generate_confidence_configs import build_config
 from python_locator import resolve_python
 from script_utils import (
-    find_latest_checkpoint,
+    build_main_command,
+    experiment_artifact_paths,
+    extract_metric_fields,
     find_repo_root,
-    read_json,
+    load_best_artifacts,
+    maybe_append_resume_args,
     run_command,
+    summarize_metric_series,
+    WLASL100_JOINT_MEAN_STD_FIELDS,
+    WLASL100_JOINT_REPEAT_FIELDS,
     write_csv,
     write_yaml,
 )
@@ -37,6 +42,8 @@ VARIANTS = {
         "consistency_loss_weight": 0.1,
     },
 }
+
+
 def per_class_top_k(score_matrix, labels, num_class, k):
     rank = score_matrix.argsort()
     hit_top_k = [label in rank[i, -k:] for i, label in enumerate(labels)]
@@ -49,6 +56,8 @@ def per_class_top_k(score_matrix, labels, num_class, k):
             for hit, is_label in zip(hit_top_k, hit_label)
         ) / class_count
     return float(sum(acc) / len(acc))
+
+
 def find_score_file_for_epoch(eval_dir: Path, epoch_index: int):
     candidates = sorted(eval_dir.glob(f"epoch_{epoch_index}_*.pkl"))
     return candidates[-1] if candidates else None
@@ -77,12 +86,6 @@ def metrics_from_score_file(score_path: Path, label_path: Path):
     return {"top1": top1, "top5": top5, "top1_per_class": top1_per_class}
 
 
-def format_mean_std(values):
-    if len(values) == 1:
-        return f"{values[0] * 100:.2f} ± 0.00"
-    return f"{statistics.mean(values) * 100:.2f} ± {statistics.stdev(values) * 100:.2f}"
-
-
 def run_seed_variant(variant_name, seed, epochs, num_worker):
     overrides = VARIANTS[variant_name]
     TMP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -107,51 +110,46 @@ def run_seed_variant(variant_name, seed, epochs, num_worker):
         return {
             "variant": variant_name,
             "seed": seed,
-            "joint_top1": metrics["top1"],
-            "joint_top5": metrics["top5"],
-            "joint_pc": metrics["top1_per_class"],
+            **extract_metric_fields(
+                metrics,
+                field_map={
+                    "top1": "joint_top1",
+                    "top5": "joint_top5",
+                    "top1_per_class": "joint_pc",
+                },
+                fields=("top1", "top5", "top1_per_class"),
+            ),
         }
 
     config_path = TMP_CONFIG_DIR / f"{config['Experiment_name']}.yaml"
     write_yaml(config_path, config)
 
-    command = [
+    command = build_main_command(
         PYTHON,
-        "-u",
-        "main.py",
-        "--config",
-        str(config_path),
-        "--seed",
-        str(seed),
-        "--num-epoch",
-        str(epochs),
-        "--num-worker",
-        str(num_worker),
-    ]
+        config_path=config_path,
+        num_worker=num_worker,
+        num_epoch=epochs,
+        extra_args=["--seed", str(seed)],
+    )
 
-    save_dir = ROOT / "work_dir" / config["Experiment_name"] / "save_models"
-    if save_dir.exists():
-        latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-        if latest_ckpt is not None and latest_epoch + 1 <= epochs:
-            command.extend(
-                [
-                    "--weights",
-                    str(latest_ckpt),
-                    "--start-epoch",
-                    str(latest_epoch + 1),
-                ]
-            )
+    save_dir = experiment_artifact_paths(ROOT, config["Experiment_name"])["save_dir"]
+    maybe_append_resume_args(command, save_dir, max_epoch=epochs)
 
     run_command(command, cwd=ROOT)
 
-    work_dir = ROOT / "work_dir" / config["Experiment_name"]
-    metrics = load_json(work_dir / "eval_results" / "best_metrics.json")
+    metrics = load_best_artifacts(ROOT, config["Experiment_name"])["metrics"]
     return {
         "variant": variant_name,
         "seed": seed,
-        "joint_top1": metrics["top1"],
-        "joint_top5": metrics["top5"],
-        "joint_pc": metrics["top1_per_class"],
+        **extract_metric_fields(
+            metrics,
+            field_map={
+                "top1": "joint_top1",
+                "top5": "joint_top5",
+                "top1_per_class": "joint_pc",
+            },
+            fields=("top1", "top5", "top1_per_class"),
+        ),
     }
 
 
@@ -187,29 +185,32 @@ def main():
             row = run_seed_variant(variant_name, seed, args.epochs, args.num_worker)
             rows.append(row)
             variant_rows.append(row)
-        summary_rows.append(
-            {
-                "variant": variant_name,
-                "joint_top1_mean_std": format_mean_std([row["joint_top1"] for row in variant_rows]),
-                "joint_top5_mean_std": format_mean_std([row["joint_top5"] for row in variant_rows]),
-                "joint_pc_mean_std": format_mean_std([row["joint_pc"] for row in variant_rows]),
-            }
+        summary_row = {"variant": variant_name}
+        summary_row.update(
+            summarize_metric_series(
+                {
+                    "joint_top1_mean_std": [row["joint_top1"] for row in variant_rows],
+                    "joint_top5_mean_std": [row["joint_top5"] for row in variant_rows],
+                    "joint_pc_mean_std": [row["joint_pc"] for row in variant_rows],
+                },
+                separator=" +/- ",
+                zero_std_for_single=True,
+            )
         )
+        summary_rows.append(summary_row)
 
-    out_path = Path(args.out_file)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = Path(args.out_file).resolve()
     write_csv(
         out_path,
         rows,
-        ["variant", "seed", "joint_top1", "joint_top5", "joint_pc"],
+        WLASL100_JOINT_REPEAT_FIELDS,
     )
 
-    summary_path = Path(args.summary_file)
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path = Path(args.summary_file).resolve()
     write_csv(
         summary_path,
         summary_rows,
-        ["variant", "joint_top1_mean_std", "joint_top5_mean_std", "joint_pc_mean_std"],
+        WLASL100_JOINT_MEAN_STD_FIELDS,
     )
 
     print(out_path)

@@ -19,3 +19,6 @@ def resolve_python(root: Path) -> str:
         return str(venv_python)
 
     return str(Path(sys.executable))
+
+
+__all__ = ["resolve_python"]

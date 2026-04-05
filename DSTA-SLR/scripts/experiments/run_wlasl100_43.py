@@ -1,16 +1,22 @@
 import argparse
-import json
 import shutil
 from pathlib import Path
 
 from generate_confidence_configs import build_config
-from experiment_specs import STREAM_SPECS
 from python_locator import resolve_python
 from script_utils import (
-    find_latest_checkpoint,
+    build_main_command,
+    build_stream_fusion_fieldnames,
+    experiment_artifact_paths,
+    extract_metric_fields,
+    find_fusion_metrics,
     find_repo_root,
+    has_best_artifacts,
+    load_best_artifacts,
+    maybe_append_resume_args,
     read_json,
     run_command,
+    run_fusion as run_fusion_job,
     write_csv,
     write_yaml,
 )
@@ -80,59 +86,30 @@ DEFAULT_HPARAM_VALUES = {
 
 def make_slug(value):
     return str(value).replace(".", "_").replace("-", "_")
-def run_stream(experiment_name, stream_name, config, device, num_worker, overwrite):
-    work_dir = ROOT / "work_dir" / experiment_name
-    best_metrics_path = work_dir / "eval_results" / "best_metrics.json"
-    best_score_path = work_dir / "eval_results" / "best_acc.pkl"
-    best_model_path = work_dir / "save_models" / "best_model.pt"
-    save_dir = work_dir / "save_models"
 
-    if (
-        not overwrite
-        and best_metrics_path.exists()
-        and best_score_path.exists()
-        and best_model_path.exists()
-    ):
-        return {
-            "metrics": load_json(best_metrics_path),
-            "score_path": best_score_path,
-            "model_path": best_model_path,
-        }
+
+def run_stream(experiment_name, stream_name, config, device, num_worker, overwrite):
+    artifacts = experiment_artifact_paths(ROOT, experiment_name)
+    work_dir = artifacts["work_dir"]
+    save_dir = artifacts["save_dir"]
+
+    if not overwrite and has_best_artifacts(artifacts):
+        return load_best_artifacts(ROOT, experiment_name)
 
     config_path = TMP_CONFIG_DIR / f"{experiment_name}.yaml"
     write_yaml(config_path, config)
-    command = [
+    command = build_main_command(
         PYTHON,
-        "-u",
-        "main.py",
-        "--config",
-        str(config_path),
-        "--device",
-        str(device),
-        "--num-worker",
-        str(num_worker),
-        "--num-epoch",
-        str(config["num_epoch"]),
-    ]
-    if overwrite:
-        command.extend(["--overwrite-work-dir", "true"])
-    else:
-        latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-        if latest_ckpt is not None:
-            command.extend(
-                [
-                    "--weights",
-                    str(latest_ckpt),
-                    "--start-epoch",
-                    str(latest_epoch + 1),
-                ]
-            )
+        config_path=config_path,
+        device=device,
+        num_worker=num_worker,
+        num_epoch=config["num_epoch"],
+        overwrite_work_dir=overwrite,
+    )
+    if not overwrite:
+        maybe_append_resume_args(command, save_dir)
     run_command(command, cwd=ROOT)
-    return {
-        "metrics": load_json(best_metrics_path),
-        "score_path": best_score_path,
-        "model_path": best_model_path,
-    }
+    return load_best_artifacts(ROOT, experiment_name)
 
 
 def run_fusion(prefix, collected, window_size, overwrite):
@@ -142,28 +119,17 @@ def run_fusion(prefix, collected, window_size, overwrite):
         shutil.rmtree(fusion_dir)
     fusion_dir.mkdir(parents=True, exist_ok=True)
     if overwrite or not metrics_path.exists():
-        run_command(
-            [
-                PYTHON,
-                "ensemble/fuse_streams.py",
-                "--label-path",
-                str(ROOT / "data" / "WLASL100" / "val_label.pkl"),
-                "--data-path",
-                str(ROOT / "data" / "WLASL100" / "val_data_joint.npy"),
-                "--joint",
-                str(collected["joint"]["score_path"]),
-                "--bone",
-                str(collected["bone"]["score_path"]),
-                "--joint-motion",
-                str(collected["joint_motion"]["score_path"]),
-                "--bone-motion",
-                str(collected["bone_motion"]["score_path"]),
-                "--window-size",
-                str(window_size),
-                "--out-dir",
-                str(fusion_dir),
-            ],
-            cwd=ROOT,
+        run_fusion_job(
+            ROOT,
+            PYTHON,
+            label_path=ROOT / "data" / "WLASL100" / "val_label.pkl",
+            data_path=ROOT / "data" / "WLASL100" / "val_data_joint.npy",
+            score_paths={
+                stream_name: collected[stream_name]["score_path"]
+                for stream_name in STREAM_ORDER
+            },
+            out_dir=fusion_dir,
+            window_size=window_size,
         )
     return read_json(metrics_path)
 
@@ -171,26 +137,30 @@ def run_fusion(prefix, collected, window_size, overwrite):
 def build_row(prefix, collected, fusion_metrics, row_key, row_value):
     row = {row_key: row_value}
     for stream_name in STREAM_ORDER:
-        row[f"{stream_name}_top1"] = collected[stream_name]["metrics"]["top1"]
-    row["fusion_top1"] = fusion_metrics["top1"]
-    row["fusion_top1_per_class"] = fusion_metrics["top1_per_class"]
-    row["fusion_top5"] = fusion_metrics["top5"]
-    row["fusion_top5_per_class"] = fusion_metrics["top5_per_class"]
+        row.update(
+            extract_metric_fields(
+                collected[stream_name]["metrics"],
+                fields=("top1",),
+                prefix=f"{stream_name}_",
+            )
+        )
+    row.update(extract_metric_fields(fusion_metrics, prefix="fusion_"))
     row["prefix"] = prefix
     return row
+
+
 def run_variant(prefix, overrides, epochs, device, num_worker, overwrite):
     reuse_prefix = overrides.get("reuse_prefix")
     if reuse_prefix:
         collected = {}
         for stream_name in STREAM_ORDER:
-            experiment_name = f"{reuse_prefix}_{stream_name}"
-            work_dir = ROOT / "work_dir" / experiment_name
-            collected[stream_name] = {
-                "metrics": read_json(work_dir / "eval_results" / "best_metrics.json"),
-                "score_path": work_dir / "eval_results" / "best_acc.pkl",
-                "model_path": work_dir / "save_models" / "best_model.pt",
-            }
-        fusion_metrics = read_json(ROOT / "work_dir" / f"{reuse_prefix}_fusion_results" / "metrics.json")
+            collected[stream_name] = load_best_artifacts(
+                ROOT,
+                f"{reuse_prefix}_{stream_name}",
+            )
+        fusion_metrics = find_fusion_metrics(ROOT, reuse_prefix)
+        if fusion_metrics is None:
+            raise FileNotFoundError(f"Missing fusion metrics for {reuse_prefix}")
         return collected, fusion_metrics
 
     collected = {}
@@ -261,18 +231,7 @@ def main():
             write_csv(
                 PAPER_TABLE_DIR / "table_4_3_ablation.csv",
                 ablation_rows,
-                [
-                    "variant",
-                    "joint_top1",
-                    "bone_top1",
-                    "joint_motion_top1",
-                    "bone_motion_top1",
-                    "fusion_top1",
-                    "fusion_top1_per_class",
-                    "fusion_top5",
-                    "fusion_top5_per_class",
-                    "prefix",
-                ],
+                build_stream_fusion_fieldnames(("variant",), include_prefix=True),
             )
 
     if args.section in {"hyperparams", "all"}:
@@ -317,19 +276,10 @@ def main():
                 write_csv(
                     PAPER_TABLE_DIR / "table_4_3_hyperparams.csv",
                     hyperparam_rows,
-                    [
-                        "parameter",
-                        "value",
-                        "joint_top1",
-                        "bone_top1",
-                        "joint_motion_top1",
-                        "bone_motion_top1",
-                        "fusion_top1",
-                        "fusion_top1_per_class",
-                        "fusion_top5",
-                        "fusion_top5_per_class",
-                        "prefix",
-                    ],
+                    build_stream_fusion_fieldnames(
+                        ("parameter", "value"),
+                        include_prefix=True,
+                    ),
                 )
 
 

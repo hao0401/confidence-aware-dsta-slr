@@ -1,37 +1,27 @@
 import argparse
-import json
-import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
+from common.runtime_helpers import maybe_reexec_with_python
 from python_locator import resolve_python
 from script_utils import (
-    find_latest_checkpoint,
+    build_main_command,
+    experiment_artifact_paths,
     find_repo_root,
+    has_best_artifacts,
+    load_best_artifacts,
+    maybe_append_resume_args,
+    prepare_fusion_workspace,
     read_json,
     read_yaml,
     run_command,
+    run_fusion,
+    write_json,
     write_yaml,
 )
 
 ROOT = find_repo_root(__file__)
-
 PYTHON = resolve_python(ROOT)
-if (
-    Path(sys.executable).resolve() != Path(PYTHON).resolve()
-    and os.environ.get("DSTA_SLR_SKIP_REEXEC") != "1"
-):
-    env = os.environ.copy()
-    env["DSTA_SLR_SKIP_REEXEC"] = "1"
-    subprocess.run(
-        [PYTHON, str(ROOT / "scripts" / Path(__file__).name), *sys.argv[1:]],
-        cwd=ROOT,
-        check=True,
-        env=env,
-    )
-    sys.exit(0)
 
 CONFIG_DIR = ROOT / "config" / "confidence"
 TMP_CONFIG_DIR = ROOT / "work_dir" / "tmp_consistency_configs"
@@ -47,6 +37,8 @@ def str2bool(value):
     if value in {"false", "0", "no", "n"}:
         return False
     raise argparse.ArgumentTypeError(f"Unsupported boolean value: {value}")
+
+
 def config_matches_existing(work_dir: Path, config_path: Path) -> bool:
     copied_config = work_dir / config_path.name
     if not copied_config.exists():
@@ -54,6 +46,8 @@ def config_matches_existing(work_dir: Path, config_path: Path) -> bool:
     return copied_config.read_text(encoding="utf-8") == config_path.read_text(
         encoding="utf-8"
     )
+
+
 def patch_config(
     config,
     experiment_name,
@@ -83,47 +77,31 @@ def patch_config(
 def run_stream(config_path, device, num_worker, overwrite):
     config = read_yaml(config_path)
     experiment_name = config["Experiment_name"]
-    work_dir = ROOT / "work_dir" / experiment_name
-    save_dir = work_dir / "save_models"
+    artifacts = experiment_artifact_paths(ROOT, experiment_name)
+    work_dir = artifacts["work_dir"]
+    save_dir = artifacts["save_dir"]
     if work_dir.exists() and not overwrite and not config_matches_existing(work_dir, config_path):
         raise RuntimeError(
             f"Existing work_dir for {experiment_name} was created from a different config. "
             "Use --overwrite-work-dir or change --experiment-prefix."
         )
-    command = [
+    if not overwrite and has_best_artifacts(artifacts):
+        return load_best_artifacts(ROOT, experiment_name)
+    command = build_main_command(
         PYTHON,
-        "-u",
-        "main.py",
-        "--config",
-        str(config_path),
-        "--device",
-        str(device),
-        "--num-worker",
-        str(num_worker),
-    ]
-    if config.get("num_epoch") is not None:
-        command.extend(["--num-epoch", str(config["num_epoch"])])
-    if overwrite:
-        command.extend(["--overwrite-work-dir", "true"])
-    elif save_dir.exists():
-        latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-        if latest_ckpt is not None:
-            command.extend(
-                [
-                    "--weights",
-                    str(latest_ckpt),
-                    "--start-epoch",
-                    str(latest_epoch + 1),
-                ]
-            )
+        config_path=config_path,
+        device=device,
+        num_worker=num_worker,
+        num_epoch=config.get("num_epoch"),
+        overwrite_work_dir=overwrite,
+    )
+    if not overwrite:
+        maybe_append_resume_args(command, save_dir)
     run_command(command, cwd=ROOT)
-    return {
-        "work_dir": work_dir,
-        "score_path": work_dir / "eval_results" / "best_acc.pkl",
-        "model_path": work_dir / "save_models" / "best_model.pt",
-        "metrics_path": work_dir / "eval_results" / "best_metrics.json",
-    }
-def main():
+    return load_best_artifacts(ROOT, experiment_name)
+
+
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Run WLASL100 four-stream consistency training and optional robustness evaluation."
     )
@@ -142,13 +120,25 @@ def main():
         default=True,
     )
     parser.add_argument("--run-robustness", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    if argv is None and maybe_reexec_with_python(ROOT, __file__, PYTHON):
+        return
+
+    args = build_parser().parse_args(argv)
 
     TMP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    fusion_input_dir = ROOT / "work_dir" / f"{args.experiment_prefix}_fusion_inputs"
-    fusion_output_dir = ROOT / "work_dir" / f"{args.experiment_prefix}_fusion_results"
-    fusion_input_dir.mkdir(parents=True, exist_ok=True)
-    fusion_output_dir.mkdir(parents=True, exist_ok=True)
+    fusion_workspace = prepare_fusion_workspace(
+        ROOT,
+        args.experiment_prefix,
+        stream_names=STREAMS,
+        include_models=True,
+    )
+    fusion_output_dir = fusion_workspace["output_dir"]
+    staged_score_paths = fusion_workspace["score_paths"]
+    staged_model_paths = fusion_workspace["model_paths"]
 
     collected = {}
     for stream_name in STREAMS:
@@ -175,35 +165,21 @@ def main():
         )
         shutil.copy2(
             collected[stream_name]["score_path"],
-            fusion_input_dir / f"best_acc_{stream_name}.pkl",
+            staged_score_paths[stream_name],
         )
         shutil.copy2(
             collected[stream_name]["model_path"],
-            fusion_input_dir / f"best_model_{stream_name}.pt",
+            staged_model_paths[stream_name],
         )
 
-    run_command(
-        [
-            PYTHON,
-            "ensemble/fuse_streams.py",
-            "--label-path",
-            str(ROOT / "data" / "WLASL100" / "val_label.pkl"),
-            "--data-path",
-            str(ROOT / "data" / "WLASL100" / "val_data_joint.npy"),
-            "--joint",
-            str(fusion_input_dir / "best_acc_joint.pkl"),
-            "--bone",
-            str(fusion_input_dir / "best_acc_bone.pkl"),
-            "--joint-motion",
-            str(fusion_input_dir / "best_acc_joint_motion.pkl"),
-            "--bone-motion",
-            str(fusion_input_dir / "best_acc_bone_motion.pkl"),
-            "--window-size",
-            "120",
-            "--out-dir",
-            str(fusion_output_dir),
-        ],
-        cwd=ROOT,
+    run_fusion(
+        ROOT,
+        PYTHON,
+        label_path=ROOT / "data" / "WLASL100" / "val_label.pkl",
+        data_path=ROOT / "data" / "WLASL100" / "val_data_joint.npy",
+        score_paths=staged_score_paths,
+        out_dir=fusion_output_dir,
+        window_size=120,
     )
 
     summary = {
@@ -213,7 +189,7 @@ def main():
         "noise_std": args.noise_std,
         "missing_prob": args.missing_prob,
         "streams": {
-            stream_name: read_json(info["metrics_path"])
+            stream_name: info["metrics"]
             for stream_name, info in collected.items()
         },
         "fusion": read_json(fusion_output_dir / "metrics.json"),
@@ -242,8 +218,7 @@ def main():
         summary["robustness_csv"] = str(robustness_out)
 
     summary_path = ROOT / "work_dir" / f"{args.experiment_prefix}_summary.json"
-    with open(summary_path, "w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=2)
+    write_json(summary_path, summary)
     print(summary_path)
 
 

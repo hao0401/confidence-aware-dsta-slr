@@ -9,6 +9,8 @@
 - `reporting/`: paper-table export and summary helpers.
 - `common/`: shared metadata and runtime helpers.
 - Top-level `run_*.py` and utility files are compatibility wrappers so existing commands still work.
+- `_compat.py`: shared helper used by those thin compatibility wrappers.
+- `common/runtime_helpers.py`: deferred `sys.path` setup and preferred-Python re-exec helpers for script entry points.
 
 ## Active experiment entry points
 
@@ -21,6 +23,7 @@
 - `run_robustness_suite.py`: missing-joint and noise robustness evaluation for one checkpoint.
 - `run_ablation_suite.py`: generic ablation and hyperparameter sweep runner.
 - `run_baseline_vs_ours_robustness.py`: side-by-side robustness comparison.
+- `run_confidence_distribution_shift.py`: test-time evaluation under confidence distribution shift.
 - `run_uniform_fusion_controls.py`: uniform-fusion control experiments.
 
 ## Support utilities
@@ -28,7 +31,7 @@
 - `generate_confidence_configs.py`: generate dataset-stream YAML configs.
 - `experiment_specs.py`: shared dataset and stream metadata.
 - `python_locator.py`: locate the intended Python interpreter.
-- `script_utils.py`: shared runtime, YAML/JSON/CSV, and checkpoint helpers.
+- `script_utils.py`: shared runtime, YAML/JSON/CSV, append-CSV, mean/std summary, metric-row/comparison-row, experiment-artifact, training-command/resume, best-artifact, and fusion helpers.
 - `validate_preprocessed_data.py`, `download_preprocessed_data.py`, `repair_corrupt_joint_npy.py`: data preparation helpers.
 - `export_paper_tables.py`, `summarize_mean_std.py`: reporting helpers.
 - `activate_conda_dsta_slr.ps1`, `setup_conda_env.ps1`: environment setup helpers.
@@ -37,3 +40,4 @@
 
 - `archive_experimental/` keeps old queue runners and quick-pilot utilities that are not part of the main workflow.
 - These scripts now resolve the repository root through `script_utils.py`, so nested archived runners stay runnable.
+- Archived Python helpers use `archive_experimental/_bootstrap.py` so they can run directly without mutating `sys.path` at import time.

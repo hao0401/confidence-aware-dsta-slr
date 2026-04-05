@@ -134,3 +134,10 @@ LITERATURE_BASELINES = {
         {"method": "HMA (R+P)", "Top-1": 75.6},
     ],
 }
+
+
+__all__ = [
+    "DATASET_SPECS",
+    "STREAM_SPECS",
+    "LITERATURE_BASELINES",
+]

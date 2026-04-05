@@ -4,7 +4,16 @@ from pathlib import Path
 
 from experiment_specs import STREAM_SPECS
 from python_locator import resolve_python
-from script_utils import find_latest_checkpoint, find_repo_root, run_command
+from script_utils import (
+    build_main_command,
+    experiment_artifact_paths,
+    find_repo_root,
+    load_best_artifacts,
+    maybe_append_resume_args,
+    prepare_fusion_workspace,
+    run_command,
+    run_fusion,
+)
 
 
 ROOT = find_repo_root(__file__)
@@ -34,10 +43,15 @@ def main():
     dataset_key = args.dataset.lower().replace("-", "_")
     config_dir = Path(args.config_dir)
     fusion_base = f"{args.experiment_prefix}_{dataset_key}" if args.experiment_prefix else dataset_key
-    fusion_input_dir = ROOT / "work_dir" / f"{fusion_base}_fusion_inputs"
-    fusion_output_dir = ROOT / "work_dir" / f"{fusion_base}_fusion_results"
-    fusion_input_dir.mkdir(parents=True, exist_ok=True)
-    fusion_output_dir.mkdir(parents=True, exist_ok=True)
+    fusion_workspace = prepare_fusion_workspace(
+        ROOT,
+        fusion_base,
+        stream_names=tuple(STREAM_SPECS),
+        include_models=True,
+    )
+    fusion_output_dir = fusion_workspace["output_dir"]
+    staged_score_paths = fusion_workspace["score_paths"]
+    staged_model_paths = fusion_workspace["model_paths"]
 
     for stream_name in STREAM_SPECS:
         config_path = config_dir / f"{dataset_key}_{stream_name}.yaml"
@@ -48,64 +62,36 @@ def main():
             if args.experiment_prefix
             else f"{dataset_key}_{stream_name}"
         )
-        source_dir = ROOT / "work_dir" / experiment_name
-        save_dir = source_dir / "save_models"
-        command = [
+        artifacts = experiment_artifact_paths(ROOT, experiment_name)
+        save_dir = artifacts["save_dir"]
+        command = build_main_command(
             PYTHON,
-            "-u",
-            "main.py",
-            "--config",
-            str(config_path),
-            "--device",
-            args.device,
-            "--num-worker",
-            str(args.num_worker),
-        ]
-        if args.overwrite_work_dir:
-            command.extend(["--overwrite-work-dir", "true"])
-        if args.num_epoch is not None:
-            command.extend(["--num-epoch", str(args.num_epoch)])
-        if not args.overwrite_work_dir and save_dir.exists():
-            latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-            if latest_ckpt is not None:
-                command.extend(
-                    [
-                        "--weights",
-                        str(latest_ckpt),
-                        "--start-epoch",
-                        str(latest_epoch + 1),
-                    ]
-                )
+            config_path=config_path,
+            device=args.device,
+            num_worker=args.num_worker,
+            num_epoch=args.num_epoch,
+            overwrite_work_dir=args.overwrite_work_dir,
+        )
+        if not args.overwrite_work_dir:
+            maybe_append_resume_args(command, save_dir)
         run_command(command, cwd=ROOT)
+        artifacts = load_best_artifacts(ROOT, experiment_name)
         shutil.copy2(
-            source_dir / "eval_results" / "best_acc.pkl",
-            fusion_input_dir / f"best_acc_{stream_name}.pkl",
+            artifacts["score_path"],
+            staged_score_paths[stream_name],
         )
         shutil.copy2(
-            source_dir / "save_models" / "best_model.pt",
-            fusion_input_dir / f"best_model_{stream_name}.pt",
+            artifacts["model_path"],
+            staged_model_paths[stream_name],
         )
 
-    run_command(
-        [
-            PYTHON,
-            "ensemble/fuse_streams.py",
-            "--label-path",
-            str(ROOT / "data" / args.dataset / "val_label.pkl"),
-            "--data-path",
-            str(ROOT / "data" / args.dataset / "val_data_joint.npy"),
-            "--joint",
-            str(fusion_input_dir / "best_acc_joint.pkl"),
-            "--bone",
-            str(fusion_input_dir / "best_acc_bone.pkl"),
-            "--joint-motion",
-            str(fusion_input_dir / "best_acc_joint_motion.pkl"),
-            "--bone-motion",
-            str(fusion_input_dir / "best_acc_bone_motion.pkl"),
-            "--out-dir",
-            str(fusion_output_dir),
-        ],
-        cwd=ROOT,
+    run_fusion(
+        ROOT,
+        PYTHON,
+        label_path=ROOT / "data" / args.dataset / "val_label.pkl",
+        data_path=ROOT / "data" / args.dataset / "val_data_joint.npy",
+        score_paths=staged_score_paths,
+        out_dir=fusion_output_dir,
     )
 
 

@@ -1,22 +1,22 @@
 import argparse
-import json
-import sys
 from pathlib import Path
 
-
-from script_utils import find_repo_root, read_json, run_command, write_csv
+from script_utils import (
+    build_comparison_fieldnames,
+    build_metric_comparison_rows,
+    experiment_artifact_paths,
+    find_fusion_metrics,
+    find_repo_root,
+    run_command,
+    write_csv,
+    write_json,
+)
+from python_locator import resolve_python
 
 
 ROOT = find_repo_root(__file__)
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from python_locator import resolve_python
-
 PYTHON = resolve_python(ROOT)
 STREAM = "joint"
-FUSION_DIR_SUFFIXES = ("_fusion_results", "_fusion")
 
 
 def read_csv(path):
@@ -26,18 +26,10 @@ def read_csv(path):
         return list(csv.DictReader(handle))
 
 
-def find_fusion_metrics(prefix):
-    for suffix in FUSION_DIR_SUFFIXES:
-        metrics_path = ROOT / "work_dir" / f"{prefix}{suffix}" / "metrics.json"
-        if metrics_path.exists():
-            return read_json(metrics_path)
-    return None
-
-
 def run_variant_robustness(label, prefix, device, num_worker, overwrite, out_dir):
-    experiment_dir = ROOT / "work_dir" / f"{prefix}_{STREAM}"
-    config_path = experiment_dir / "config.yaml"
-    weights_path = experiment_dir / "save_models" / "best_model.pt"
+    artifacts = experiment_artifact_paths(ROOT, f"{prefix}_{STREAM}")
+    config_path = artifacts["config_path"]
+    weights_path = artifacts["model_path"]
     robustness_path = out_dir / f"{label}_{STREAM}_robustness.csv"
     if overwrite or not robustness_path.exists():
         run_command(
@@ -69,40 +61,13 @@ def safe_float(value):
 def build_comparison_rows(baseline_rows, ours_rows):
     baseline_by_scenario = {row["scenario"]: row for row in baseline_rows}
     ours_by_scenario = {row["scenario"]: row for row in ours_rows}
-    scenarios = list(dict.fromkeys([*baseline_by_scenario.keys(), *ours_by_scenario.keys()]))
-
-    clean_baseline_top1 = safe_float(baseline_by_scenario.get("clean", {}).get("top1"))
-    clean_ours_top1 = safe_float(ours_by_scenario.get("clean", {}).get("top1"))
-    rows = []
-    for scenario in scenarios:
-        baseline_row = baseline_by_scenario.get(scenario, {})
-        ours_row = ours_by_scenario.get(scenario, {})
-        baseline_top1 = safe_float(baseline_row.get("top1"))
-        ours_top1 = safe_float(ours_row.get("top1"))
-        baseline_top5 = safe_float(baseline_row.get("top5"))
-        ours_top5 = safe_float(ours_row.get("top5"))
-        rows.append(
-            {
-                "scenario": scenario,
-                "baseline_top1": baseline_top1,
-                "ours_top1": ours_top1,
-                "top1_gain": None
-                if baseline_top1 is None or ours_top1 is None
-                else ours_top1 - baseline_top1,
-                "baseline_top1_retention": None
-                if baseline_top1 is None or clean_baseline_top1 in (None, 0.0)
-                else baseline_top1 / clean_baseline_top1,
-                "ours_top1_retention": None
-                if ours_top1 is None or clean_ours_top1 in (None, 0.0)
-                else ours_top1 / clean_ours_top1,
-                "baseline_top5": baseline_top5,
-                "ours_top5": ours_top5,
-                "top5_gain": None
-                if baseline_top5 is None or ours_top5 is None
-                else ours_top5 - baseline_top5,
-            }
-        )
-    return rows
+    return build_metric_comparison_rows(
+        baseline_by_scenario,
+        ours_by_scenario,
+        left_label="baseline",
+        right_label="ours",
+        value_transform=safe_float,
+    )
 
 
 def main():
@@ -120,7 +85,7 @@ def main():
     )
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
+    out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     baseline_rows = run_variant_robustness(
@@ -144,30 +109,19 @@ def main():
     write_csv(
         comparison_csv,
         comparison_rows,
-        [
-            "scenario",
-            "baseline_top1",
-            "ours_top1",
-            "top1_gain",
-            "baseline_top1_retention",
-            "ours_top1_retention",
-            "baseline_top5",
-            "ours_top5",
-            "top5_gain",
-        ],
+        build_comparison_fieldnames("baseline", "ours"),
     )
 
     payload = {
         "stream": STREAM,
         "baseline_prefix": args.baseline_prefix,
         "ours_prefix": args.ours_prefix,
-        "baseline_clean_fusion": find_fusion_metrics(args.baseline_prefix),
-        "ours_clean_fusion": find_fusion_metrics(args.ours_prefix),
+        "baseline_clean_fusion": find_fusion_metrics(ROOT, args.baseline_prefix),
+        "ours_clean_fusion": find_fusion_metrics(ROOT, args.ours_prefix),
         "comparison_rows": comparison_rows,
     }
     json_path = out_dir / "comparison.json"
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    write_json(json_path, payload)
 
     print(comparison_csv)
     print(json_path)

@@ -1,40 +1,31 @@
 import argparse
 import hashlib
-import json
-import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
+from common.runtime_helpers import maybe_reexec_with_python
 from python_locator import resolve_python
 from script_utils import (
-    find_latest_checkpoint,
+    build_main_command,
+    CONFIDENCE_SIGNAL_ABLATION_FIELDS,
+    experiment_artifact_paths,
+    extract_metric_fields,
     find_repo_root,
+    has_best_artifacts,
+    load_best_artifacts,
+    maybe_append_resume_args,
+    prepare_fusion_workspace,
     read_json,
     read_yaml,
     run_command,
+    run_fusion,
     write_csv,
+    write_json,
     write_yaml,
 )
 
 ROOT = find_repo_root(__file__)
-
 PYTHON = resolve_python(ROOT)
-if (
-    Path(sys.executable).resolve() != Path(PYTHON).resolve()
-    and os.environ.get("DSTA_SLR_SKIP_REEXEC") != "1"
-):
-    env = os.environ.copy()
-    env["DSTA_SLR_SKIP_REEXEC"] = "1"
-    subprocess.run(
-        [PYTHON, str(ROOT / "scripts" / Path(__file__).name), *sys.argv[1:]],
-        cwd=ROOT,
-        check=True,
-        env=env,
-    )
-    sys.exit(0)
-
 
 CONFIG_DIR = ROOT / "config" / "confidence"
 TMP_CONFIG_DIR = ROOT / "work_dir" / "tmp_conf_signal_configs"
@@ -100,6 +91,8 @@ VARIANTS = {
         "consistency_feature_loss_weight": 0.0,
     },
 }
+
+
 def compute_code_fingerprint():
     digest = hashlib.sha256()
     for path in FINGERPRINT_FILES:
@@ -126,6 +119,8 @@ def fingerprint_matches_existing(work_dir: Path) -> bool:
     if not path.exists():
         return True
     return path.read_text(encoding="utf-8").strip() == compute_code_fingerprint()
+
+
 def patch_config(config, experiment_name, variant_spec, num_epoch):
     config = dict(config)
     config["Experiment_name"] = experiment_name
@@ -160,8 +155,9 @@ def patch_config(config, experiment_name, variant_spec, num_epoch):
 def run_stream(config_path, device, num_worker, overwrite):
     config = read_yaml(config_path)
     experiment_name = config["Experiment_name"]
-    work_dir = ROOT / "work_dir" / experiment_name
-    save_dir = work_dir / "save_models"
+    artifacts = experiment_artifact_paths(ROOT, experiment_name)
+    work_dir = artifacts["work_dir"]
+    save_dir = artifacts["save_dir"]
     if work_dir.exists() and not overwrite:
         if not config_matches_existing(work_dir, config_path):
             raise RuntimeError(
@@ -173,41 +169,25 @@ def run_stream(config_path, device, num_worker, overwrite):
                 f"Existing work_dir for {experiment_name} was created from different code. "
                 "Use --overwrite-work-dir or change --experiment-prefix."
             )
-    command = [
+        if has_best_artifacts(artifacts):
+            return load_best_artifacts(ROOT, experiment_name)
+    command = build_main_command(
         PYTHON,
-        "-u",
-        "main.py",
-        "--config",
-        str(config_path),
-        "--device",
-        str(device),
-        "--num-worker",
-        str(num_worker),
-    ]
-    if overwrite:
-        command.extend(["--overwrite-work-dir", "true"])
-    elif save_dir.exists():
-        latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-        if latest_ckpt is not None:
-            command.extend(
-                [
-                    "--weights",
-                    str(latest_ckpt),
-                    "--start-epoch",
-                    str(latest_epoch + 1),
-                ]
-            )
+        config_path=config_path,
+        device=device,
+        num_worker=num_worker,
+        overwrite_work_dir=overwrite,
+    )
+    if not overwrite:
+        maybe_append_resume_args(command, save_dir)
     run_command(command, cwd=ROOT)
     fingerprint_path(work_dir).write_text(
         compute_code_fingerprint(), encoding="utf-8"
     )
-    return {
-        "work_dir": work_dir,
-        "score_path": work_dir / "eval_results" / "best_acc.pkl",
-        "model_path": work_dir / "save_models" / "best_model.pt",
-        "metrics_path": work_dir / "eval_results" / "best_metrics.json",
-    }
-def main():
+    return load_best_artifacts(ROOT, experiment_name)
+
+
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Run confidence signal validity ablations on WLASL100."
     )
@@ -222,21 +202,27 @@ def main():
         default=list(VARIANTS.keys()),
     )
     parser.add_argument("--experiment-prefix", default="conf_signal_wlasl100")
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    if argv is None and maybe_reexec_with_python(ROOT, __file__, PYTHON):
+        return
+
+    args = build_parser().parse_args(argv)
 
     TMP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     summary_rows = []
 
     for variant_name in args.variants:
         variant_spec = VARIANTS[variant_name]
-        fusion_input_dir = (
-            ROOT / "work_dir" / f"{args.experiment_prefix}_{variant_name}_fusion_inputs"
+        fusion_workspace = prepare_fusion_workspace(
+            ROOT,
+            f"{args.experiment_prefix}_{variant_name}",
+            stream_names=STREAMS,
         )
-        fusion_output_dir = (
-            ROOT / "work_dir" / f"{args.experiment_prefix}_{variant_name}_fusion_results"
-        )
-        fusion_input_dir.mkdir(parents=True, exist_ok=True)
-        fusion_output_dir.mkdir(parents=True, exist_ok=True)
+        fusion_output_dir = fusion_workspace["output_dir"]
+        staged_score_paths = fusion_workspace["score_paths"]
         collected = {}
 
         for stream_name in STREAMS:
@@ -259,46 +245,40 @@ def main():
             )
             shutil.copy2(
                 collected[stream_name]["score_path"],
-                fusion_input_dir / f"best_acc_{stream_name}.pkl",
+                staged_score_paths[stream_name],
             )
 
-        run_command(
-            [
-                PYTHON,
-                "ensemble/fuse_streams.py",
-                "--label-path",
-                str(ROOT / "data" / "WLASL100" / "val_label.pkl"),
-                "--data-path",
-                str(ROOT / "data" / "WLASL100" / "val_data_joint.npy"),
-                "--joint",
-                str(fusion_input_dir / "best_acc_joint.pkl"),
-                "--bone",
-                str(fusion_input_dir / "best_acc_bone.pkl"),
-                "--joint-motion",
-                str(fusion_input_dir / "best_acc_joint_motion.pkl"),
-                "--bone-motion",
-                str(fusion_input_dir / "best_acc_bone_motion.pkl"),
-                "--window-size",
-                "120",
+        run_fusion(
+            ROOT,
+            PYTHON,
+            label_path=ROOT / "data" / "WLASL100" / "val_label.pkl",
+            data_path=ROOT / "data" / "WLASL100" / "val_data_joint.npy",
+            score_paths=staged_score_paths,
+            out_dir=fusion_output_dir,
+            window_size=120,
+            extra_args=[
                 "--confidence-mode",
                 variant_spec["confidence_mode"],
                 "--confidence-constant-value",
                 str(variant_spec["confidence_constant_value"]),
-                "--out-dir",
-                str(fusion_output_dir),
             ],
-            cwd=ROOT,
         )
 
         fusion_metrics = read_json(fusion_output_dir / "metrics.json")
-        joint_metrics = read_json(collected["joint"]["metrics_path"])
+        joint_metrics = collected["joint"]["metrics"]
         summary_rows.append(
             {
                 "variant": variant_name,
-                "joint_top1": joint_metrics["top1"],
-                "joint_top1_per_class": joint_metrics["top1_per_class"],
-                "fusion_top1": fusion_metrics["top1"],
-                "fusion_top1_per_class": fusion_metrics["top1_per_class"],
+                **extract_metric_fields(
+                    joint_metrics,
+                    fields=("top1", "top1_per_class"),
+                    prefix="joint_",
+                ),
+                **extract_metric_fields(
+                    fusion_metrics,
+                    fields=("top1", "top1_per_class"),
+                    prefix="fusion_",
+                ),
             }
         )
 
@@ -307,11 +287,10 @@ def main():
     if not summary_rows:
         raise RuntimeError("No variants were executed; summary_rows is empty.")
     csv_path = summary_dir / "confidence_signal_ablation.csv"
-    write_csv(csv_path, summary_rows, list(summary_rows[0].keys()))
+    write_csv(csv_path, summary_rows, CONFIDENCE_SIGNAL_ABLATION_FIELDS)
 
     json_path = summary_dir / "confidence_signal_ablation.json"
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(summary_rows, handle, indent=2)
+    write_json(json_path, summary_rows)
 
     print(csv_path)
     print(json_path)

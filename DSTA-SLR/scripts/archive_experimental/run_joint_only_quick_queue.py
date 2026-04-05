@@ -1,15 +1,21 @@
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+try:
+    from ._bootstrap import load_common_module
+except ImportError:
+    from _bootstrap import load_common_module
 
-from python_locator import resolve_python
-from script_utils import find_repo_root, run_command
+resolve_python = load_common_module("python_locator").resolve_python
+_SCRIPT_UTILS = load_common_module("script_utils")
+append_csv_row = _SCRIPT_UTILS.append_csv_row
+build_main_command = _SCRIPT_UTILS.build_main_command
+extract_metric_fields = _SCRIPT_UTILS.extract_metric_fields
+find_repo_root = _SCRIPT_UTILS.find_repo_root
+QUICK_QUEUE_SUMMARY_FIELDS = _SCRIPT_UTILS.QUICK_QUEUE_SUMMARY_FIELDS
+run_command = _SCRIPT_UTILS.run_command
 
 
 ROOT = find_repo_root(__file__)
@@ -36,24 +42,19 @@ def rewrite_config(source: Path, target: Path, experiment_name: str, num_epoch: 
             text = text.rstrip() + "\n" + replacement + "\n"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
+
+
 def load_best_metrics(experiment_name: str) -> dict:
     metrics_path = WORK_DIR / experiment_name / "eval_results" / "best_metrics.json"
     return json.loads(metrics_path.read_text(encoding="utf-8"))
 
 
 def append_summary(summary_path: Path, row: dict) -> None:
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not summary_path.exists()
-    with summary_path.open("a", encoding="utf-8", newline="") as handle:
-        import csv
-
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=["dataset", "experiment_name", "epoch", "top1", "top1_per_class", "top5", "top5_per_class"],
-        )
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+    append_csv_row(
+        summary_path,
+        row,
+        QUICK_QUEUE_SUMMARY_FIELDS,
+    )
 
 
 def run_dataset(dataset: str, num_epoch: int, device: str, num_worker: int, prefix: str, summary_path: Path) -> None:
@@ -63,22 +64,16 @@ def run_dataset(dataset: str, num_epoch: int, device: str, num_worker: int, pref
     temp_config = WORK_DIR / "tmp_joint_only_quick_configs" / f"{experiment_name}.yaml"
 
     rewrite_config(source_config, temp_config, experiment_name, num_epoch)
+    command = build_main_command(
+        PYTHON,
+        config_path=temp_config,
+        device=device,
+        num_worker=num_worker,
+        num_epoch=num_epoch,
+        overwrite_work_dir=True,
+    )
     run_command(
-        [
-            PYTHON,
-            "-u",
-            "main.py",
-            "--config",
-            str(temp_config),
-            "--device",
-            str(device),
-            "--num-worker",
-            str(num_worker),
-            "--num-epoch",
-            str(num_epoch),
-            "--overwrite-work-dir",
-            "true",
-        ],
+        command,
         cwd=ROOT,
         flush=True,
     )
@@ -87,10 +82,7 @@ def run_dataset(dataset: str, num_epoch: int, device: str, num_worker: int, pref
         "dataset": dataset,
         "experiment_name": experiment_name,
         "epoch": metrics.get("epoch"),
-        "top1": metrics.get("top1"),
-        "top1_per_class": metrics.get("top1_per_class"),
-        "top5": metrics.get("top5"),
-        "top5_per_class": metrics.get("top5_per_class"),
+        **extract_metric_fields(metrics, use_get=True),
     }
     append_summary(summary_path, row)
     print(
@@ -99,7 +91,7 @@ def run_dataset(dataset: str, num_epoch: int, device: str, num_worker: int, pref
     )
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description="Run joint-only quick pilots sequentially.")
     parser.add_argument(
         "--datasets",
@@ -110,8 +102,11 @@ def main():
     parser.add_argument("--device", default="0")
     parser.add_argument("--num-worker", type=int, default=0)
     parser.add_argument("--prefix", default="fast5")
-    args = parser.parse_args()
+    return parser
 
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     summary_path = WORK_DIR / "joint_only_quick_results" / f"{args.prefix}_summary.csv"
     for dataset in args.datasets:
         run_dataset(dataset, args.num_epoch, args.device, args.num_worker, args.prefix, summary_path)

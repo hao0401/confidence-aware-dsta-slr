@@ -46,6 +46,9 @@ def compute_stream_weights(
     window_size,
     confidence_mode="original",
     confidence_constant_value=1.0,
+    confidence_transform="identity",
+    confidence_transform_power=2.0,
+    confidence_transform_threshold=0.5,
 ):
     weights = {key: [] for key in STREAM_FLAGS}
     for sample_idx, sample in enumerate(data):
@@ -58,6 +61,9 @@ def compute_stream_weights(
                     window_size=window_size,
                     confidence_mode=confidence_mode,
                     confidence_constant_value=confidence_constant_value,
+                    confidence_transform=confidence_transform,
+                    confidence_transform_power=confidence_transform_power,
+                    confidence_transform_threshold=confidence_transform_threshold,
                     sample_index=sample_idx,
                 )
             )
@@ -82,6 +88,21 @@ def main():
     )
     parser.add_argument(
         "--confidence-constant-value", type=float, default=1.0
+    )
+    parser.add_argument(
+        "--confidence-transform",
+        choices=["identity", "square", "sqrt", "power", "rank", "binary"],
+        default="identity",
+    )
+    parser.add_argument(
+        "--confidence-transform-power",
+        type=float,
+        default=2.0,
+    )
+    parser.add_argument(
+        "--confidence-transform-threshold",
+        type=float,
+        default=0.5,
     )
     parser.add_argument("--out-dir", required=True)
     args = parser.parse_args()
@@ -119,6 +140,9 @@ def main():
         args.window_size,
         confidence_mode=args.confidence_mode,
         confidence_constant_value=args.confidence_constant_value,
+        confidence_transform=args.confidence_transform,
+        confidence_transform_power=args.confidence_transform_power,
+        confidence_transform_threshold=args.confidence_transform_threshold,
     )
 
     fused_scores = []

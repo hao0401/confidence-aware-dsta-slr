@@ -73,6 +73,37 @@ def apply_confidence_mode(
     raise ValueError(f"Unsupported confidence mode: {mode}")
 
 
+def apply_confidence_transform(
+    confidence,
+    transform="identity",
+    power=2.0,
+    threshold=0.5,
+):
+    confidence = sanitize_confidence(confidence)
+    if transform in (None, "identity", "original"):
+        return confidence
+    if transform == "square":
+        return np.square(confidence).astype(confidence.dtype, copy=False)
+    if transform == "sqrt":
+        return np.sqrt(confidence).astype(confidence.dtype, copy=False)
+    if transform == "power":
+        return np.power(confidence, float(power)).astype(confidence.dtype, copy=False)
+    if transform == "rank":
+        flat = confidence.reshape(-1)
+        if flat.size <= 1:
+            return confidence
+        order = np.argsort(flat, kind="mergesort")
+        ranks = np.empty(flat.shape[0], dtype=np.float32)
+        if flat.shape[0] == 1:
+            ranks[order] = 1.0
+        else:
+            ranks[order] = np.linspace(0.0, 1.0, flat.shape[0], dtype=np.float32)
+        return ranks.reshape(confidence.shape).astype(confidence.dtype, copy=False)
+    if transform == "binary":
+        return (confidence >= float(threshold)).astype(confidence.dtype, copy=False)
+    raise ValueError(f"Unsupported confidence transform: {transform}")
+
+
 def make_bone_stream(data_numpy):
     ori_data = data_numpy.copy()
     bone_data = np.zeros_like(ori_data)
@@ -138,6 +169,9 @@ def compute_sample_quality(
     window_size=-1,
     confidence_mode="original",
     confidence_constant_value=1.0,
+    confidence_transform="identity",
+    confidence_transform_power=2.0,
+    confidence_transform_threshold=0.5,
     sample_index=None,
 ):
     data_numpy = np.array(data_numpy, copy=True)
@@ -146,6 +180,12 @@ def compute_sample_quality(
         mode=confidence_mode,
         constant_value=confidence_constant_value,
         seed=sample_index,
+    )
+    data_numpy[CONFIDENCE_CHANNEL] = apply_confidence_transform(
+        data_numpy[CONFIDENCE_CHANNEL],
+        transform=confidence_transform,
+        power=confidence_transform_power,
+        threshold=confidence_transform_threshold,
     )
     data_numpy = make_stream(
         data_numpy,
@@ -189,6 +229,9 @@ class Feeder(Dataset):
         noise_std=0.0,
         confidence_mode="original",
         confidence_constant_value=1.0,
+        confidence_transform="identity",
+        confidence_transform_power=2.0,
+        confidence_transform_threshold=0.5,
         drop_confidence_channel=False,
         num_class=2000,
     ):
@@ -226,6 +269,9 @@ class Feeder(Dataset):
         self.noise_std = noise_std
         self.confidence_mode = confidence_mode
         self.confidence_constant_value = confidence_constant_value
+        self.confidence_transform = confidence_transform
+        self.confidence_transform_power = confidence_transform_power
+        self.confidence_transform_threshold = confidence_transform_threshold
         self.drop_confidence_channel = drop_confidence_channel
         self.num_class = num_class
         if normalization:
@@ -341,6 +387,12 @@ class Feeder(Dataset):
             mode=self.confidence_mode,
             constant_value=self.confidence_constant_value,
             seed=index,
+        )
+        data_numpy[CONFIDENCE_CHANNEL] = apply_confidence_transform(
+            data_numpy[CONFIDENCE_CHANNEL],
+            transform=self.confidence_transform,
+            power=self.confidence_transform_power,
+            threshold=self.confidence_transform_threshold,
         )
 
         # remove null frames

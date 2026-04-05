@@ -1,13 +1,13 @@
 import argparse
 import re
-import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+try:
+    from ._bootstrap import load_common_module
+except ImportError:
+    from _bootstrap import load_common_module
 
-from script_utils import find_repo_root
+find_repo_root = load_common_module("script_utils").find_repo_root
 
 
 ROOT = find_repo_root(__file__)
@@ -88,12 +88,15 @@ def generate_configs(prefix: str, output_dir: Path) -> None:
             print(target_path)
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description="Generate short-cycle quick-pilot configs.")
     parser.add_argument("--prefix", default="qp")
     parser.add_argument("--output-dir", default=str(OUTPUT_CONFIG_DIR))
-    args = parser.parse_args()
+    return parser
 
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     generate_configs(prefix=args.prefix, output_dir=Path(args.output_dir))
 
 

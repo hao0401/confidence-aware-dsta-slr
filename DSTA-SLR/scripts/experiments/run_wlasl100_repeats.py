@@ -1,14 +1,19 @@
 import argparse
-import shutil
 from pathlib import Path
 
 from generate_confidence_configs import build_config
 from python_locator import resolve_python
 from script_utils import (
-    find_latest_checkpoint,
+    build_main_command,
+    experiment_artifact_paths,
+    extract_metric_fields,
     find_repo_root,
+    load_best_artifacts,
+    maybe_append_resume_args,
     read_json,
     run_command,
+    run_fusion,
+    WLASL100_REPEAT_FIELDS,
     write_csv,
     write_yaml,
 )
@@ -79,77 +84,58 @@ def run_seed_variant(variant_name, seed, epochs, overwrite, num_worker):
 
         config_path = TMP_CONFIG_DIR / f"{config['Experiment_name']}.yaml"
         write_yaml(config_path, config)
-        command = [
+        command = build_main_command(
             PYTHON,
-            "-u",
-            "main.py",
-            "--config",
-            str(config_path),
-            "--seed",
-            str(seed),
-            "--num-epoch",
-            str(epochs),
-            "--num-worker",
-            str(num_worker),
-        ]
-        if overwrite:
-            command.extend(["--overwrite-work-dir", "true"])
-        else:
-            save_dir = ROOT / "work_dir" / config["Experiment_name"] / "save_models"
-            if save_dir.exists():
-                latest_epoch, latest_ckpt = find_latest_checkpoint(save_dir)
-                if latest_ckpt is not None:
-                    command.extend(
-                        [
-                            "--weights",
-                            str(latest_ckpt),
-                            "--start-epoch",
-                            str(latest_epoch + 1),
-                        ]
-                    )
+            config_path=config_path,
+            num_worker=num_worker,
+            num_epoch=epochs,
+            overwrite_work_dir=overwrite,
+            extra_args=["--seed", str(seed)],
+        )
+        if not overwrite:
+            save_dir = experiment_artifact_paths(ROOT, config["Experiment_name"])["save_dir"]
+            maybe_append_resume_args(command, save_dir)
         run_command(command, cwd=ROOT)
 
-        work_dir = ROOT / "work_dir" / config["Experiment_name"]
-        collected[stream_name] = {
-            "metrics": load_json(work_dir / "eval_results" / "best_metrics.json"),
-            "score_path": work_dir / "eval_results" / "best_acc.pkl",
-        }
+        collected[stream_name] = load_best_artifacts(ROOT, config["Experiment_name"])
 
     fusion_dir = ROOT / "work_dir" / f"conf_wlasl100_43_{variant_name}_seed{seed}_fusion"
-    run_command(
-        [
-            PYTHON,
-            "ensemble/fuse_streams.py",
-            "--label-path",
-            str(ROOT / "data" / "WLASL100" / "val_label.pkl"),
-            "--data-path",
-            str(ROOT / "data" / "WLASL100" / "val_data_joint.npy"),
-            "--joint",
-            str(collected["joint"]["score_path"]),
-            "--bone",
-            str(collected["bone"]["score_path"]),
-            "--joint-motion",
-            str(collected["joint_motion"]["score_path"]),
-            "--bone-motion",
-            str(collected["bone_motion"]["score_path"]),
-            "--window-size",
-            "120",
-            "--out-dir",
-            str(fusion_dir),
-        ],
-        cwd=ROOT,
+    run_fusion(
+        ROOT,
+        PYTHON,
+        label_path=ROOT / "data" / "WLASL100" / "val_label.pkl",
+        data_path=ROOT / "data" / "WLASL100" / "val_data_joint.npy",
+        score_paths={
+            stream_name: collected[stream_name]["score_path"]
+            for stream_name in STREAMS
+        },
+        out_dir=fusion_dir,
+        window_size=120,
     )
+    fusion_metrics = read_json(fusion_dir / "metrics.json")
     return {
         "variant": variant_name,
         "seed": seed,
-        "joint_top1": collected["joint"]["metrics"]["top1"],
-        "fusion_top1": read_json(fusion_dir / "metrics.json")["top1"],
-        "fusion_pc": read_json(fusion_dir / "metrics.json")["top1_per_class"],
+        **extract_metric_fields(
+            collected["joint"]["metrics"],
+            fields=("top1",),
+            prefix="joint_",
+        ),
+        **extract_metric_fields(
+            fusion_metrics,
+            field_map={
+                "top1": "fusion_top1",
+                "top1_per_class": "fusion_pc",
+            },
+            fields=("top1", "top1_per_class"),
+        ),
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run repeated WLASL100 experiments for mean±std.")
+    parser = argparse.ArgumentParser(
+        description="Run repeated WLASL100 experiments for mean +/- std."
+    )
     parser.add_argument("--variant", nargs="+", choices=list(VARIANTS.keys()), required=True)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--num-worker", type=int, default=0)
@@ -177,12 +163,11 @@ def main():
                 )
             )
 
-    out_path = Path(args.out_file)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = Path(args.out_file).resolve()
     write_csv(
         out_path,
         rows,
-        ["variant", "seed", "joint_top1", "fusion_top1", "fusion_pc"],
+        WLASL100_REPEAT_FIELDS,
     )
 
 

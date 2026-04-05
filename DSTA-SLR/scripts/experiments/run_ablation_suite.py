@@ -1,10 +1,13 @@
 import argparse
-import json
 from pathlib import Path
 
 from python_locator import resolve_python
 from script_utils import (
+    build_main_command,
+    build_fieldnames_from_rows,
     find_repo_root,
+    load_best_artifacts,
+    read_json,
     read_yaml,
     run_command,
     write_csv,
@@ -18,25 +21,16 @@ PYTHON = resolve_python(ROOT)
 
 def run_training(config, config_path, device, num_worker, num_epoch, overwrite):
     write_yaml(config_path, config)
-    command = [
+    command = build_main_command(
         PYTHON,
-        "-u",
-        "main.py",
-        "--config",
-        str(config_path),
-        "--device",
-        str(device),
-        "--num-worker",
-        str(num_worker),
-        "--num-epoch",
-        str(num_epoch),
-    ]
-    if overwrite:
-        command.extend(["--overwrite-work-dir", "true"])
+        config_path=config_path,
+        device=device,
+        num_worker=num_worker,
+        num_epoch=num_epoch,
+        overwrite_work_dir=overwrite,
+    )
     run_command(command, cwd=ROOT)
-    metrics_path = ROOT / "work_dir" / config["Experiment_name"] / "eval_results" / "best_metrics.json"
-    with open(metrics_path, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+    return load_best_artifacts(ROOT, config["Experiment_name"])["metrics"]
 
 
 def main():
@@ -50,8 +44,8 @@ def main():
     parser.add_argument("--fusion-metrics")
     args = parser.parse_args()
 
-    base_config = read_yaml(args.config)
-    out_dir = Path(args.out_dir)
+    base_config = read_yaml(Path(args.config).resolve())
+    out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_config_dir = ROOT / "work_dir" / "tmp_configs"
     tmp_config_dir.mkdir(parents=True, exist_ok=True)
@@ -83,14 +77,13 @@ def main():
         ablation_rows.append({"variant": name, **metrics})
 
     if args.fusion_metrics and Path(args.fusion_metrics).exists():
-        with open(args.fusion_metrics, "r", encoding="utf-8") as handle:
-            fusion_metrics = json.load(handle)
+        fusion_metrics = read_json(Path(args.fusion_metrics).resolve())
         ablation_rows.append({"variant": "fusion_only", **fusion_metrics})
 
     write_csv(
         out_dir / "ablation.csv",
         ablation_rows,
-        sorted({key for row in ablation_rows for key in row.keys()}),
+        build_fieldnames_from_rows(ablation_rows, leading_fields=("variant",)),
     )
 
     hyperparam_rows = []
@@ -121,7 +114,10 @@ def main():
     write_csv(
         out_dir / "hyperparams.csv",
         hyperparam_rows,
-        sorted({key for row in hyperparam_rows for key in row.keys()}),
+        build_fieldnames_from_rows(
+            hyperparam_rows,
+            leading_fields=("parameter", "value"),
+        ),
     )
 
 

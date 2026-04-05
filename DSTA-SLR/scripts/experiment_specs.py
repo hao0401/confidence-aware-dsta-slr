@@ -1,1 +1,5 @@
-from common.experiment_specs import *  # noqa: F401,F403
+from _compat import export_module as _export_module
+
+_MODULE = "common.experiment_specs"
+globals().update(_export_module(_MODULE))
+__all__ = [name for name in globals() if not name.startswith("_")]

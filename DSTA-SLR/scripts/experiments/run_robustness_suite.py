@@ -1,32 +1,65 @@
 import argparse
-import csv
 import pickle
+from functools import lru_cache
 from pathlib import Path
 
-import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-
-from script_utils import find_repo_root, read_json, run_command, read_yaml, write_yaml
+from common.runtime_helpers import ensure_sys_path
+from python_locator import resolve_python
+from script_utils import (
+    build_main_command,
+    build_fieldnames_from_rows,
+    find_repo_root,
+    read_json,
+    run_command,
+    read_yaml,
+    write_csv,
+    write_json,
+    write_yaml,
+)
 
 
 ROOT = find_repo_root(__file__)
-import sys
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from feeders.feeder import compute_sample_quality
-from python_locator import resolve_python
-from main import get_parser
-
 PYTHON = resolve_python(ROOT)
 
 
-VALID_CONFIG_KEYS = set(vars(get_parser().parse_args([])).keys())
+def ensure_repo_imports() -> None:
+    ensure_sys_path(ROOT)
+
+
+@lru_cache(maxsize=1)
+def get_compute_sample_quality():
+    ensure_repo_imports()
+    from feeders.feeder import compute_sample_quality
+
+    return compute_sample_quality
+
+
+@lru_cache(maxsize=1)
+def get_valid_config_keys():
+    ensure_repo_imports()
+    from main import get_parser
+
+    return set(vars(get_parser().parse_args([])).keys())
+
+
+@lru_cache(maxsize=1)
+def get_numpy():
+    import numpy as np
+
+    return np
+
+
+@lru_cache(maxsize=1)
+def get_torch_runtime():
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader
+
+    return torch, nn, DataLoader
 
 
 def import_class(name):
+    ensure_repo_imports()
     components = name.split(".")
     mod = __import__(components[0])
     for comp in components[1:]:
@@ -35,10 +68,13 @@ def import_class(name):
 
 
 def load_checkpoint(path):
+    torch, _, _ = get_torch_runtime()
     try:
         return torch.load(path, map_location="cpu", weights_only=False)
     except TypeError:
         return torch.load(path, map_location="cpu")
+
+
 def latest_score_file(eval_dir):
     candidates = sorted(eval_dir.glob("epoch_*.pkl"), key=lambda item: item.stat().st_mtime)
     return candidates[-1] if candidates else None
@@ -46,8 +82,7 @@ def latest_score_file(eval_dir):
 
 def save_metrics(eval_dir, metrics, score_dict, epoch_tag="cpu"):
     eval_dir.mkdir(parents=True, exist_ok=True)
-    with open(eval_dir / "last_metrics.json", "w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, indent=2)
+    write_json(eval_dir / "last_metrics.json", metrics)
     score_path = eval_dir / f"epoch_{epoch_tag}_{metrics['top1']}.pkl"
     with open(score_path, "wb") as handle:
         pickle.dump(score_dict, handle)
@@ -55,6 +90,8 @@ def save_metrics(eval_dir, metrics, score_dict, epoch_tag="cpu"):
 
 
 def run_eval_cpu(base_config, weights_path, experiment_name, feeder_overrides, num_worker):
+    np = get_numpy()
+    torch, nn, DataLoader = get_torch_runtime()
     config = dict(base_config)
     config["Experiment_name"] = experiment_name
     config["test_feeder_args"] = dict(config["test_feeder_args"])
@@ -137,27 +174,19 @@ def run_eval(base_config, weights_path, experiment_name, feeder_overrides, devic
     config["overwrite_work_dir"] = True
     config["test_feeder_args"] = dict(config["test_feeder_args"])
     config["test_feeder_args"].update(feeder_overrides)
-    config = {key: value for key, value in config.items() if key in VALID_CONFIG_KEYS}
+    config = {key: value for key, value in config.items() if key in get_valid_config_keys()}
     tmp_dir = ROOT / "work_dir" / "tmp_configs"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     config_path = tmp_dir / f"{experiment_name}.yaml"
     write_yaml(config_path, config)
-    run_command(
-        [
-            PYTHON,
-            "-u",
-            "main.py",
-            "--config",
-            str(config_path),
-            "--device",
-            str(device),
-            "--num-worker",
-            str(num_worker),
-            "--overwrite-work-dir",
-            "true",
-        ],
-        cwd=ROOT,
+    command = build_main_command(
+        PYTHON,
+        config_path=config_path,
+        device=device,
+        num_worker=num_worker,
+        overwrite_work_dir=True,
     )
+    run_command(command, cwd=ROOT)
     eval_dir = ROOT / "work_dir" / experiment_name / "eval_results"
     metrics = read_json(eval_dir / "last_metrics.json")
     score_path = latest_score_file(eval_dir)
@@ -174,6 +203,8 @@ def bucket_accuracy(
     confidence_mode="original",
     confidence_constant_value=1.0,
 ):
+    np = get_numpy()
+    compute_sample_quality = get_compute_sample_quality()
     with open(label_path, "rb") as handle:
         sample_names, labels = pickle.load(handle, encoding="latin1")
     labels = [int(label) for label in labels]
@@ -222,7 +253,7 @@ def bucket_accuracy(
     return rows
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description="Run robustness evaluation suite.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--weights", required=True)
@@ -236,7 +267,11 @@ def main():
         default=[5.0, 10.0, 20.0],
         help="Gaussian coordinate noise stds in pixel units.",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     base_config = read_yaml(args.config)
     base_name = base_config["Experiment_name"]
@@ -297,13 +332,12 @@ def main():
             )
         )
 
-    out_path = Path(args.out_file)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8", newline="") as handle:
-        fieldnames = sorted({key for row in rows for key in row.keys()})
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    out_path = Path(args.out_file).resolve()
+    write_csv(
+        out_path,
+        rows,
+        build_fieldnames_from_rows(rows, leading_fields=("scenario",)),
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from _compat import export_module as _export_module, run_module_main as _run_module_main
 
-_MODULE = "experiments.run_confidence_suite"
+_MODULE = "experiments.run_confidence_distribution_shift"
 globals().update(_export_module(_MODULE))
 __all__ = [name for name in globals() if not name.startswith("_")]
 

@@ -1,20 +1,20 @@
 import argparse
-import json
-import sys
 from pathlib import Path
 
-
-from script_utils import find_repo_root, read_json, run_command, write_csv
-
-
-ROOT = find_repo_root(__file__)
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
+from script_utils import (
+    experiment_artifact_paths,
+    extract_metric_fields,
+    find_repo_root,
+    read_json,
+    run_fusion,
+    UNIFORM_FUSION_SUMMARY_FIELDS,
+    write_csv,
+    write_json,
+)
 from python_locator import resolve_python
 
 
+ROOT = find_repo_root(__file__)
 PYTHON = resolve_python(ROOT)
 
 VARIANT_STREAM_DIRS = {
@@ -55,6 +55,8 @@ VARIANT_STREAM_DIRS = {
         "bone_motion": "conf_wlasl100_consistency_bone_motion",
     },
 }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run uniform-fusion controls for WLASL100 ablation variants."
@@ -75,40 +77,40 @@ def main():
     )
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
+    label_path = Path(args.label_path).resolve()
+    out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
     for variant in args.variants:
         stream_dirs = VARIANT_STREAM_DIRS[variant]
         variant_out = out_dir / variant
-        run_command(
-            [
-                PYTHON,
-                "ensemble/fuse_streams_uniform.py",
-                "--label-path",
-                args.label_path,
-                "--joint",
-                str(ROOT / "work_dir" / stream_dirs["joint"] / "eval_results" / "best_acc.pkl"),
-                "--bone",
-                str(ROOT / "work_dir" / stream_dirs["bone"] / "eval_results" / "best_acc.pkl"),
-                "--joint-motion",
-                str(ROOT / "work_dir" / stream_dirs["joint_motion"] / "eval_results" / "best_acc.pkl"),
-                "--bone-motion",
-                str(ROOT / "work_dir" / stream_dirs["bone_motion"] / "eval_results" / "best_acc.pkl"),
-                "--out-dir",
-                str(variant_out),
-            ],
-            cwd=ROOT,
+        run_fusion(
+            ROOT,
+            PYTHON,
+            script_path="ensemble/fuse_streams_uniform.py",
+            label_path=label_path,
+            score_paths={
+                stream_name: experiment_artifact_paths(ROOT, stream_dirs[stream_name])["score_path"]
+                for stream_name in ("joint", "bone", "joint_motion", "bone_motion")
+            },
+            out_dir=variant_out,
         )
         metrics = read_json(variant_out / "metrics.json")
         rows.append(
             {
                 "variant": variant,
-                "uniform_fusion_top1": round(float(metrics["top1"]) * 100, 2),
-                "uniform_fusion_pc": round(float(metrics["top1_per_class"]) * 100, 2),
-                "uniform_fusion_top5": round(float(metrics["top5"]) * 100, 2),
-                "uniform_fusion_top5_pc": round(float(metrics["top5_per_class"]) * 100, 2),
+                **extract_metric_fields(
+                    metrics,
+                    field_map={
+                        "top1": "uniform_fusion_top1",
+                        "top1_per_class": "uniform_fusion_pc",
+                        "top5": "uniform_fusion_top5",
+                        "top5_per_class": "uniform_fusion_top5_pc",
+                    },
+                    scale=100.0,
+                    round_digits=2,
+                ),
             }
         )
 
@@ -116,18 +118,11 @@ def main():
     write_csv(
         csv_path,
         rows,
-        [
-            "variant",
-            "uniform_fusion_top1",
-            "uniform_fusion_pc",
-            "uniform_fusion_top5",
-            "uniform_fusion_top5_pc",
-        ],
+        UNIFORM_FUSION_SUMMARY_FIELDS,
     )
 
     json_path = out_dir / "uniform_fusion_summary.json"
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(rows, handle, indent=2)
+    write_json(json_path, rows)
 
     print(csv_path)
     print(json_path)
