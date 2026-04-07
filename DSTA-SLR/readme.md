@@ -1,78 +1,45 @@
-# DSTA-SLR: Confidence-Aware Skeleton-Based Sign Language Recognition
+# Dynamic Spatial-Temporal Aggregation for Skeleton-Aware Sign Language Recognition
 
-This directory contains the main research code for the confidence-aware DSTA-SLR release. It extends the original DSTA-SLR pipeline with confidence-aware modeling, reliability-aware consistency training, robustness evaluation, and reproducible experiment workflows for skeleton-based sign language recognition.
+This codebase is built on the original [DSTA-SLR](https://github.com/hulianyuyy/DSTA-SLR) project for skeleton-aware sign language recognition and keeps the same overall training and evaluation workflow, while extending it with confidence-aware modeling, reliability-aware consistency training, robustness evaluation, and reproducible experiment utilities.
 
-The goal of this release is not only to reproduce the baseline DSTA-SLR setup, but also to support controlled studies on how pose-confidence signals affect training stability, fusion behavior, and robustness under corrupted skeleton inputs.
+Skeleton-based sign language recognition uses sequences of body, hand, and facial keypoints as input instead of RGB frames. Compared with RGB-based pipelines, it is lighter to train and evaluate, while still providing a strong recognition baseline. The original DSTA-SLR work introduced a dynamic spatial-temporal aggregation network for this setting. This repository keeps that foundation and adds a confidence-aware research track for studying how pose-confidence signals affect recognition quality and robustness.
 
-## Research Focus
+## Confidence-Aware Extension
 
-This codebase is organized around three practical research goals:
+Compared with the upstream DSTA-SLR release, this version adds:
 
-1. Reproduce a strong skeleton-based sign language recognition baseline.
-2. Inject confidence information into the data pipeline, model, and training objective in a controlled way.
-3. Evaluate whether those changes improve robustness under missing-joint and noisy-pose conditions.
+- confidence-aware data handling in `feeders/feeder.py`
+  - support for `original`, `constant`, and `shuffle` confidence modes
+  - confidence remapping options such as `square`, `sqrt`, `power`, `rank`, and `binary`
+  - missing-joint and coordinate-noise perturbations for robustness studies
+- confidence-aware model updates in `model/fstgan.py`
+  - confidence encoding
+  - confidence-guided graph aggregation
+  - temporal rectification from confidence maps
+- reliability-aware consistency training in `main.py`
+  - prediction-level consistency loss
+  - feature-level consistency loss
+  - optional confidence-derived weighting for supervision
+- experiment and reporting support in `scripts/`
+  - confidence configuration generation
+  - four-stream confidence-aware training and fusion
+  - repeat runs, mean/std summaries, and paper-table export helpers
+  - robustness and confidence-distribution-shift evaluation workflows
 
-## Main Additions in This Release
+## Data Preparation
 
-### 1. Confidence-aware data handling
+The preprocessed skeleton data for NMFs-CSL, SLR500, MSASL, and WLASL are referenced from the original project release [here](https://mega.nz/folder/EvkEzIAC#gq_nWLbbWoj9WVnJGxnGaA). Please follow the dataset licenses, rules, and usage agreements before downloading or using any data.
 
-Implemented primarily in `feeders/feeder.py`.
+For datasets used to train or test the model, place each dataset under `data/<DATASET_NAME>/`. For example, for `WLASL2000`:
 
-- sanitizes pose-confidence values before use
-- supports `original`, `constant`, and `shuffle` confidence modes
-- simulates missing joints and coordinate noise for robustness studies
-- keeps confidence perturbations tied to reproducible experiment configs
+```bash
+mkdir -p data
+ln -s /path/to/WLASL2000 ./data/WLASL2000
+```
 
-### 2. Confidence-aware model updates
+If you are working on Windows, you can also copy the dataset directory directly into `data/` or create a junction instead of a symlink.
 
-Implemented primarily in `model/fstgan.py`.
-
-- confidence encoding
-- confidence-guided graph aggregation
-- temporal rectification from confidence maps
-- architecture changes designed to keep confidence signals usable without rewriting the full baseline stack
-
-### 3. Reliability-aware consistency training
-
-Integrated in `main.py`.
-
-- prediction-level consistency loss
-- feature-level consistency loss
-- optional confidence-derived weighting for consistency supervision
-- training path designed for comparative ablation instead of only a single final model
-
-### 4. Reproducible experiment tooling
-
-Implemented across `scripts/`.
-
-- dataset-stream config generation
-- four-stream training and fusion
-- WLASL100 ablation suites
-- repeat runs for mean and standard deviation reporting
-- robustness evaluation and reporting helpers
-
-### 5. Fusion and reporting support
-
-Implemented across `ensemble/` and reporting scripts.
-
-- confidence-aware fusion utilities
-- uniform-fusion control baselines
-- export helpers for summary tables and result aggregation
-
-## Repository Structure
-
-- `config/`: baseline and confidence-aware YAML experiment configurations
-- `feeders/`: dataset loading, confidence handling, and perturbation logic
-- `graph/`: graph definitions and related graph utilities
-- `model/`: model implementation, including confidence-aware extensions
-- `ensemble/`: stream fusion utilities and search helpers
-- `scripts/`: experiment runners, data-preparation tools, and reporting scripts
-- `pretrained_models/`: optional checkpoints and notes for external model distribution
-- `main.py`: training and evaluation entry point
-
-## Supported Datasets
-
-The configs and experiment scripts currently support:
+Supported dataset keys in the configs include:
 
 - `WLASL100`
 - `WLASL300`
@@ -85,16 +52,11 @@ The configs and experiment scripts currently support:
 - `SLR500`
 - `NMFs-CSL`
 
-Preprocessed skeleton data are not bundled with this repository. The original project release references the prepared data package [here](https://mega.nz/folder/EvkEzIAC#gq_nWLbbWoj9WVnJGxnGaA). Please follow the relevant dataset licenses and usage terms before downloading or using any data.
+## Pretrained Models
 
-Place each dataset under `data/<DATASET_NAME>/`. For example, for `WLASL2000`:
+Optional pretrained checkpoints can be placed under `pretrained_models/`.
 
-```bash
-mkdir -p data
-ln -s /path/to/WLASL2000 ./data/WLASL2000
-```
-
-On Windows, you can also copy the dataset folder directly under `data/` or create a junction instead of a symlink.
+For a public release, large checkpoints are better shared through GitHub Releases or external storage instead of normal Git history. This repository does not bundle large model weights or training outputs.
 
 ## Installation
 
@@ -109,32 +71,40 @@ python -m pip install --extra-index-url https://download.pytorch.org/whl/cu128 t
 python -m pip install -r requirements-conda.txt
 ```
 
-PowerShell helpers are also available:
+PowerShell helpers are also provided:
 
 ```powershell
 .\scripts\setup_conda_env.ps1
 .\scripts\activate_conda_dsta_slr.ps1
 ```
 
-### Legacy pip or venv setup
+### Legacy pip setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## Training and Testing
 
-### Baseline training
+The baseline DSTA-SLR workflow remains the main entry point.
+
+### Training
 
 ```bash
 python -u main.py --config config/train.yaml --device 0
 ```
 
-### Baseline evaluation
+### Testing
 
 ```bash
 python -u main.py --config config/test.yaml --device 0
 ```
+
+If you want to evaluate a trained checkpoint, set the weight path in the evaluation config or use the evaluation workflow that passes `--weights` explicitly.
+
+## Confidence-Aware Workflows
+
+In addition to the baseline training and testing setup, this repository provides confidence-aware experiment paths.
 
 ### Confidence-aware single-stream training
 
@@ -142,7 +112,7 @@ python -u main.py --config config/test.yaml --device 0
 python -u main.py --config config/confidence/wlasl100_joint.yaml --device 0
 ```
 
-### Four-stream confidence-aware training and fusion
+### Confidence-aware four-stream training and fusion
 
 ```bash
 python scripts/run_confidence_suite.py --dataset WLASL100 --device 0 --num-worker 0
@@ -160,7 +130,17 @@ python scripts/run_wlasl100_consistency_suite.py --device 0 --num-worker 0 --num
 python scripts/run_robustness_suite.py --config config/confidence/wlasl100_joint.yaml --weights work_dir/conf_wlasl100_joint/save_models/best_model.pt --device 0 --num-worker 0 --out-file work_dir/conf_wlasl100_joint/robustness.csv
 ```
 
-### Manual four-stream fusion
+### Confidence distribution shift evaluation
+
+```bash
+python scripts/run_confidence_distribution_shift.py --device 0 --num-worker 0
+```
+
+## Ensembling
+
+To reproduce multi-stream fusion results, train the required streams separately, then fuse the saved prediction files from `work_dir/`.
+
+This repository keeps the upstream-style multi-stream setup while also providing a more explicit fusion utility:
 
 ```bash
 python ensemble/fuse_streams.py \
@@ -173,44 +153,29 @@ python ensemble/fuse_streams.py \
   --out-dir work_dir/conf_wlasl100_fusion_results
 ```
 
-## Suggested Reproduction Path
+For confidence-aware workflows, `scripts/run_confidence_suite.py` is the easiest entry point because it automates the four-stream training and fusion process.
 
-If you want a practical path through the codebase, start with:
+## Scripts
 
-1. Baseline training and evaluation using `config/train.yaml` and `config/test.yaml`.
-2. Confidence-aware single-stream runs using `config/confidence/`.
-3. Four-stream confidence-aware training through `scripts/run_confidence_suite.py`.
-4. Reliability-aware consistency training with `scripts/run_wlasl100_consistency_suite.py`.
-5. Robustness analysis with `scripts/run_robustness_suite.py`.
+The `scripts/` directory keeps stable top-level entry points, while the main implementations are grouped under:
 
-For the intended experiment ordering and outputs, see [`scripts/EXPERIMENT_RUNBOOK.md`](scripts/EXPERIMENT_RUNBOOK.md).
+- `scripts/experiments/`: experiment runner implementations
+- `scripts/data_tools/`: dataset preparation and config generation helpers
+- `scripts/reporting/`: summary and table export helpers
+- `scripts/common/`: shared runtime, path, and artifact helpers
 
-## Scripts and Experiment Utilities
+For more detail, see:
 
-For a high-level map of active scripts, see [`scripts/README.md`](scripts/README.md).
+- `scripts/README.md`
+- `scripts/EXPERIMENT_RUNBOOK.md`
 
-The scripts are organized to support:
+## Notes for Public Use
 
-- stable top-level entry points for the main workflows
-- grouped implementations under experiment, data, reporting, and common helper modules
-- repeatable runs for ablation and robustness studies
-
-## Outputs and Artifact Policy
-
-Datasets, local environments, logs, training outputs, and large checkpoints are intentionally excluded from version control.
-
-- keep datasets under `data/`
-- keep experiment outputs under `work_dir/`
-- distribute large checkpoints through GitHub Releases or external storage instead of normal Git history
-
-Optional pretrained checkpoints can be placed under `pretrained_models/`, but large model files are better shared through release assets or external storage.
-
-## Reproducibility Notes
-
-- Use the provided YAML configs instead of ad hoc command-line overrides whenever possible.
-- Keep dataset paths and output paths stable across runs to simplify fusion and reporting.
-- Prefer script entry points in `scripts/` when reproducing reported workflows, because they encode the intended run structure more clearly than one-off manual commands.
+- Keep datasets under `data/`.
+- Keep experiment outputs under `work_dir/`.
+- Keep large checkpoints out of normal Git history.
+- Prefer the provided YAML configs and script entry points when reproducing experiments.
 
 ## Acknowledgements
 
-This code builds on [SAM-SLR-v2](https://github.com/jackyjsy/SAM-SLR-v2) and [SLGTformer](https://github.com/neilsong/SLGTformer). Thanks to the original authors for open-sourcing their work.
+This code is based on [SAM-SLR-v2](https://github.com/jackyjsy/SAM-SLR-v2), [SLGTformer](https://github.com/neilsong/SLGTformer), and the original [DSTA-SLR](https://github.com/hulianyuyy/DSTA-SLR). Many thanks to the original authors for open-sourcing their code.
