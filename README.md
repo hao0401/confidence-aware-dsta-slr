@@ -51,13 +51,6 @@ The public release includes the code and documentation needed to understand and 
 - fusion and reporting utilities
 - public-facing documentation
 
-The following are intentionally excluded from version control:
-
-- datasets
-- checkpoints and large pretrained weights
-- training outputs and logs
-- temporary artifacts
-
 ## Notes for Public Use
 
 - Data should be placed locally under `DSTA-SLR/data/`.
